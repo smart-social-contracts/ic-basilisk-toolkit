@@ -187,6 +187,137 @@ class TestFormatHelpers:
         assert is_envelope(None) is False
 
 
+@_skip_no_crypto
+class TestBatchOps:
+    """Unit tests for CryptoService batch grant/revoke against the local
+    in-memory entity store (no canister needed).
+
+    These cover performance fix #1 (batch grants) and #3 (single-pass
+    envelope indexing): grant_many / revoke_many snapshot the scope's
+    envelopes once instead of re-scanning per principal.
+    """
+
+    @staticmethod
+    def _svc():
+        from ic_basilisk_toolkit.crypto import CryptoService
+
+        # Batch ops never touch the vetkey service, so None is fine.
+        return CryptoService(None)
+
+    @staticmethod
+    def _cleanup(scope_prefix):
+        from ic_basilisk_toolkit.crypto import CryptoGroup, CryptoGroupMember, KeyEnvelope
+
+        for e in list(KeyEnvelope.instances()):
+            if str(e.scope).startswith(scope_prefix):
+                e.delete()
+        for m in list(CryptoGroupMember.instances()):
+            if str(m.group).startswith(scope_prefix):
+                m.delete()
+        for g in list(CryptoGroup.instances()):
+            if str(g.name).startswith(scope_prefix):
+                g.delete()
+
+    def test_grant_many_creates_envelopes(self):
+        scope = "_bo_grant_create"
+        svc = self._svc()
+        try:
+            count = svc.grant_many(
+                scope, {"p1": "aa11", "p2": "bb22", "p3": "cc33"}
+            )
+            assert count == 3
+            envs = {str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)}
+            assert set(envs) == {"p1", "p2", "p3"}
+            # Each DEK is stored in the toolkit envelope format.
+            assert envs["p1"] == "env:v=2:k=aa11"
+            assert envs["p2"] == "env:v=2:k=bb22"
+        finally:
+            self._cleanup(scope)
+
+    def test_grant_many_updates_without_duplicating(self):
+        scope = "_bo_grant_update"
+        svc = self._svc()
+        try:
+            svc.grant_many(scope, {"p1": "aa11", "p2": "bb22"})
+            # Re-grant p1 with a new DEK, add p3.
+            count = svc.grant_many(scope, {"p1": "ff99", "p3": "dd44"})
+            assert count == 2
+            envs = {str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)}
+            # No duplicate p1; updated value; p2 untouched; p3 added.
+            assert set(envs) == {"p1", "p2", "p3"}
+            assert envs["p1"] == "env:v=2:k=ff99"
+            assert envs["p2"] == "env:v=2:k=bb22"
+            assert envs["p3"] == "env:v=2:k=dd44"
+        finally:
+            self._cleanup(scope)
+
+    def test_revoke_many_deletes_only_targets(self):
+        scope = "_bo_revoke"
+        svc = self._svc()
+        try:
+            svc.grant_many(scope, {"p1": "aa", "p2": "bb", "p3": "cc"})
+            deleted = svc.revoke_many(scope, ["p1", "p3", "not-present"])
+            assert deleted == 2
+            remaining = {str(e.principal) for e in svc.list_envelopes(scope)}
+            assert remaining == {"p2"}
+        finally:
+            self._cleanup(scope)
+
+    def test_revoke_many_is_scope_isolated(self):
+        scope_a = "_bo_iso_a"
+        scope_b = "_bo_iso_b"
+        svc = self._svc()
+        try:
+            svc.grant_many(scope_a, {"shared": "aa"})
+            svc.grant_many(scope_b, {"shared": "bb"})
+            svc.revoke_many(scope_a, ["shared"])
+            assert [e for e in svc.list_envelopes(scope_a)] == []
+            b = svc.list_envelopes(scope_b)
+            assert len(b) == 1 and str(b[0].principal) == "shared"
+        finally:
+            self._cleanup(scope_a)
+            self._cleanup(scope_b)
+
+    def test_grant_group_access_uses_member_deks(self):
+        from ic_basilisk_toolkit.crypto import CryptoGroup, CryptoGroupMember
+
+        scope = "_bo_grp_grant"
+        group = "_bo_grp_grant"
+        svc = self._svc()
+        try:
+            CryptoGroup(name=group, description="t")
+            CryptoGroupMember(group=group, principal="m1", role="member")
+            CryptoGroupMember(group=group, principal="m2", role="member")
+
+            count = svc.grant_group_access(scope, group, {"m1": "1111", "m2": "2222"})
+            assert count == 2
+            envs = {str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)}
+            assert envs["m1"] == "env:v=2:k=1111"
+            assert envs["m2"] == "env:v=2:k=2222"
+        finally:
+            self._cleanup(scope)
+
+    def test_revoke_group_access_removes_members_only(self):
+        from ic_basilisk_toolkit.crypto import CryptoGroup, CryptoGroupMember
+
+        scope = "_bo_grp_revoke"
+        group = "_bo_grp_revoke"
+        svc = self._svc()
+        try:
+            CryptoGroup(name=group, description="t")
+            CryptoGroupMember(group=group, principal="m1", role="member")
+            CryptoGroupMember(group=group, principal="m2", role="member")
+            # m1, m2 are group members; "outsider" is granted directly.
+            svc.grant_many(scope, {"m1": "1111", "m2": "2222", "outsider": "9999"})
+
+            deleted = svc.revoke_group_access(scope, group)
+            assert deleted == 2
+            remaining = {str(e.principal) for e in svc.list_envelopes(scope)}
+            assert remaining == {"outsider"}
+        finally:
+            self._cleanup(scope)
+
+
 class TestGroupCodeGeneration:
     """Test that %group code generation functions produce valid Python."""
 

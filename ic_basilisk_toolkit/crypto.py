@@ -357,6 +357,60 @@ class CryptoService:
         logger.info(f"Granted access: scope={scope!r} -> {target_principal}")
         return envelope
 
+    def grant_many(self, scope, wrapped_deks):
+        """
+        Grant (or update) access for many principals in a single pass.
+
+        This is the batch counterpart of :meth:`grant_access`.  It snapshots
+        the scope's existing envelopes **once** (O(total_envelopes)) and then
+        upserts each target (O(targets)), instead of re-scanning all envelopes
+        for every principal — important when sharing with large groups or
+        departments.
+
+        Args:
+            scope: Scope identifier.
+            wrapped_deks: Dict mapping ``principal -> wrapped_dek_hex``.
+
+        Returns:
+            Number of envelopes created/updated.
+        """
+        index = {str(e.principal): e for e in self.list_envelopes(scope)}
+        count = 0
+        for principal, dek_hex in (wrapped_deks or {}).items():
+            principal = str(principal)
+            existing = index.get(principal)
+            if existing:
+                if dek_hex:
+                    existing.wrapped_dek = encode_envelope(dek_hex)
+            else:
+                index[principal] = KeyEnvelope(
+                    scope=scope,
+                    principal=principal,
+                    wrapped_dek=encode_envelope(dek_hex or ""),
+                )
+            count += 1
+        logger.info(f"grant_many: scope={scope!r} ({count} principals)")
+        return count
+
+    def revoke_many(self, scope, principals):
+        """
+        Revoke access for many principals in a single pass.
+
+        Snapshots the scope's envelopes once and deletes those whose principal
+        is in ``principals`` (O(total_envelopes) instead of O(targets x total)).
+
+        Returns:
+            Number of envelopes deleted.
+        """
+        targets = {str(p) for p in (principals or [])}
+        count = 0
+        for e in list(self.list_envelopes(scope)):
+            if str(e.principal) in targets:
+                e.delete()
+                count += 1
+        logger.info(f"revoke_many: scope={scope!r} ({count} deleted)")
+        return count
+
     def grant_group_access(self, scope, group_name, wrapped_deks=None):
         """
         Grant all members of a group access to a scope.
@@ -372,16 +426,14 @@ class CryptoService:
             Number of envelopes created/updated.
         """
         wrapped_deks = wrapped_deks or {}
-        members = list(CryptoGroupMember.instances())
-        members = [m for m in members if str(m.group) == group_name]
-
-        count = 0
-        for member in members:
-            principal = str(member.principal)
-            dek_hex = wrapped_deks.get(principal, "")
-            self.grant_access(scope, principal, dek_hex)
-            count += 1
-
+        members = [
+            m for m in CryptoGroupMember.instances() if str(m.group) == group_name
+        ]
+        # Build the full {principal: wrapped_dek} map and grant in one pass.
+        batch = {
+            str(m.principal): wrapped_deks.get(str(m.principal), "") for m in members
+        }
+        count = self.grant_many(scope, batch)
         logger.info(
             f"Granted group access: scope={scope!r} group={group_name!r} ({count} members)"
         )
@@ -412,14 +464,10 @@ class CryptoService:
         Returns:
             Number of envelopes deleted.
         """
-        members = list(CryptoGroupMember.instances())
-        members = [m for m in members if str(m.group) == group_name]
-
-        count = 0
-        for member in members:
-            if self.revoke_access(scope, str(member.principal)):
-                count += 1
-
+        members = [
+            m for m in CryptoGroupMember.instances() if str(m.group) == group_name
+        ]
+        count = self.revoke_many(scope, [str(m.principal) for m in members])
         logger.info(
             f"Revoked group access: scope={scope!r} group={group_name!r} ({count} members)"
         )
