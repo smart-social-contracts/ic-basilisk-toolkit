@@ -206,7 +206,11 @@ class TestBatchOps:
 
     @staticmethod
     def _cleanup(scope_prefix):
-        from ic_basilisk_toolkit.crypto import CryptoGroup, CryptoGroupMember, KeyEnvelope
+        from ic_basilisk_toolkit.crypto import (
+            CryptoGroup,
+            CryptoGroupMember,
+            KeyEnvelope,
+        )
 
         for e in list(KeyEnvelope.instances()):
             if str(e.scope).startswith(scope_prefix):
@@ -222,11 +226,11 @@ class TestBatchOps:
         scope = "_bo_grant_create"
         svc = self._svc()
         try:
-            count = svc.grant_many(
-                scope, {"p1": "aa11", "p2": "bb22", "p3": "cc33"}
-            )
+            count = svc.grant_many(scope, {"p1": "aa11", "p2": "bb22", "p3": "cc33"})
             assert count == 3
-            envs = {str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)}
+            envs = {
+                str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)
+            }
             assert set(envs) == {"p1", "p2", "p3"}
             # Each DEK is stored in the toolkit envelope format.
             assert envs["p1"] == "env:v=2:k=aa11"
@@ -242,7 +246,9 @@ class TestBatchOps:
             # Re-grant p1 with a new DEK, add p3.
             count = svc.grant_many(scope, {"p1": "ff99", "p3": "dd44"})
             assert count == 2
-            envs = {str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)}
+            envs = {
+                str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)
+            }
             # No duplicate p1; updated value; p2 untouched; p3 added.
             assert set(envs) == {"p1", "p2", "p3"}
             assert envs["p1"] == "env:v=2:k=ff99"
@@ -291,7 +297,9 @@ class TestBatchOps:
 
             count = svc.grant_group_access(scope, group, {"m1": "1111", "m2": "2222"})
             assert count == 2
-            envs = {str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)}
+            envs = {
+                str(e.principal): str(e.wrapped_dek) for e in svc.list_envelopes(scope)
+            }
             assert envs["m1"] == "env:v=2:k=1111"
             assert envs["m2"] == "env:v=2:k=2222"
         finally:
