@@ -5,6 +5,6 @@
 canisters:
   - name: basilisk_website
     recipe:
-      type: "@dfinity/asset-canister@v2.1.0"
+      type: "@dfinity/asset-canister@v2.2.0"
       configuration:
         dir: src/assets
