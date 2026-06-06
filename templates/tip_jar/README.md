@@ -32,26 +32,28 @@ src/
       index.html   — single-page UI
       app.js       — IC agent calls to backend
       style.css    — dark-theme styling
-dfx.json           — IC project config (backend + frontend canisters)
+icp.yaml           — IC project config (backend + frontend canisters)
 ```
 
 ## Quick Start
 
+Requires [icp-cli](https://github.com/dfinity/icp-cli).
+
 ```bash
 # 1. Start a local IC replica
-dfx start --background
+icp network start -d
 
 # 2. Deploy both canisters
-dfx deploy
+icp deploy
 
 # 3. Try it out
-dfx canister call tip_jar_backend status
-dfx canister call tip_jar_backend register_donor '("Alice")'
-dfx canister call tip_jar_backend leave_message '("Alice", "Hello world!")'
-dfx canister call tip_jar_backend get_leaderboard
+icp canister call tip_jar_backend status
+icp canister call tip_jar_backend register_donor '("Alice")'
+icp canister call tip_jar_backend leave_message '("Alice", "Hello world!")'
+icp canister call tip_jar_backend get_leaderboard
 
 # 4. Open the frontend
-echo "http://$(dfx canister id tip_jar_frontend).localhost:4943"
+echo "http://$(icp canister id tip_jar_frontend).localhost:4943"
 
 # 5. Interactive shell
 basilisk shell --canister tip_jar_backend
@@ -77,7 +79,7 @@ inter-canister call, then resumes with the result.
 ## Deploy to Mainnet
 
 ```bash
-dfx deploy --network ic
+icp deploy -e ic
 ```
 
 ## Learn More

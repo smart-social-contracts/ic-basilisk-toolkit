@@ -2,12 +2,12 @@
 # Tests tasks, wallet, crypto, fx, vetkeys, shell magic commands, database, etc.
 # The workflow builds the toolkit test canister WASM (with ic-python-db bundled),
 # installs it on the test canister, runs all test shards, then stops the canister.
+# Deployed/driven with icp-cli.
 
 name: IC Tests
 
 env:
     PYTHON_VERSION: "3.13"
-    DFX_VERSION: "0.30.2"
     CANISTER_ID: "ru4ga-siaaa-aaaai-q7f3a-cai"
     NETWORK: "ic"
 
@@ -42,8 +42,6 @@ on:
 jobs:
     setup-ic-canister:
         runs-on: ubuntu-latest
-        env:
-            DFX_WARNING: -mainnet_plaintext_identity
         steps:
             - uses: actions/checkout@v4
 
@@ -52,17 +50,25 @@ jobs:
               with:
                   python-version: ${{ env.PYTHON_VERSION }}
 
-            - name: Install dfx
-              run: |
-                  DFXVM_INIT_YES=true DFX_VERSION=${{ env.DFX_VERSION }} sh -ci "$(curl -fsSL https://sdk.dfinity.org/install.sh)"
-                  echo "$HOME/.local/share/dfx/bin" >> $GITHUB_PATH
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
 
-            - name: Import DFX identity
+            - name: Install icp-cli + ic-wasm
+              run: npm install -g @icp-sdk/icp-cli @icp-sdk/ic-wasm
+
+            - name: Import deploy identity
+              env:
+                  IC_IDENTITY_PEM: ${{ secrets.IC_IDENTITY_PEM }}
               run: |
-                  echo "${{ secrets.IC_IDENTITY_PEM }}" > /tmp/ci-identity.pem
-                  dfx identity import ci-deploy /tmp/ci-identity.pem --storage-mode plaintext 2>/dev/null || true
-                  rm /tmp/ci-identity.pem
-                  dfx identity use ci-deploy
+                  if [ -z "$IC_IDENTITY_PEM" ]; then
+                      echo "::error::IC_IDENTITY_PEM secret is not set."; exit 1
+                  fi
+                  umask 077
+                  printf '%s' "$IC_IDENTITY_PEM" > /tmp/ci-identity.pem
+                  icp identity import ci-deploy --from-pem /tmp/ci-identity.pem --storage plaintext
+                  rm -f /tmp/ci-identity.pem
+                  icp identity default ci-deploy
 
             - name: Install basilisk
               run: |
@@ -88,14 +94,14 @@ jobs:
               working-directory: tests/test_canister
               run: |
                   echo "Stopping canister $CANISTER_ID..."
-                  dfx canister stop "$CANISTER_ID" --network "$NETWORK" 2>/dev/null || true
+                  icp canister stop "$CANISTER_ID" -n "$NETWORK" --identity ci-deploy 2>/dev/null || true
                   sleep 3
                   echo "Reinstalling canister with fresh WASM..."
-                  dfx canister install "$CANISTER_ID" --mode reinstall --yes --network "$NETWORK" --wasm .basilisk/shell_test/shell_test.wasm
+                  icp canister install "$CANISTER_ID" --mode reinstall -y -n "$NETWORK" --identity ci-deploy --wasm .basilisk/shell_test/shell_test.wasm
                   echo "Starting canister..."
-                  dfx canister start "$CANISTER_ID" --network "$NETWORK"
+                  icp canister start "$CANISTER_ID" -n "$NETWORK" --identity ci-deploy
                   echo "Verifying canister is reachable..."
-                  dfx canister call "$CANISTER_ID" status --network "$NETWORK"
+                  icp canister call "$CANISTER_ID" status -n "$NETWORK" --identity ci-deploy
 
     ic-tests:
         needs: setup-ic-canister
@@ -138,7 +144,6 @@ jobs:
                     - shard: guards
                       pytest_args: tests/test_guards.py
         env:
-            DFX_WARNING: -mainnet_plaintext_identity
             BASILISK_TEST_CANISTER: ${{ inputs.canister || 'ru4ga-siaaa-aaaai-q7f3a-cai' }}
             BASILISK_TEST_NETWORK: ${{ inputs.network || 'ic' }}
         name: ic-tests (${{ matrix.shard }})
@@ -146,21 +151,26 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            - name: Install dfx
-              run: |
-                  DFXVM_INIT_YES=true DFX_VERSION=${{ env.DFX_VERSION }} sh -ci "$(curl -fsSL https://sdk.dfinity.org/install.sh)"
-                  echo "$HOME/.local/share/dfx/bin" >> $GITHUB_PATH
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
 
-            - name: Import DFX identity
+            - name: Install icp-cli + ic-wasm
+              run: npm install -g @icp-sdk/icp-cli @icp-sdk/ic-wasm
+
+            - name: Import deploy identity
+              env:
+                  IC_IDENTITY_PEM: ${{ secrets.IC_IDENTITY_PEM }}
               run: |
-                  if [ -z "${{ secrets.IC_IDENTITY_PEM }}" ]; then
+                  if [ -z "$IC_IDENTITY_PEM" ]; then
                     echo "::error::IC_IDENTITY_PEM secret is not set."
                     exit 1
                   fi
-                  echo "${{ secrets.IC_IDENTITY_PEM }}" > /tmp/ci-identity.pem
-                  dfx identity import ci-deploy /tmp/ci-identity.pem --storage-mode plaintext 2>/dev/null || true
-                  rm /tmp/ci-identity.pem
-                  dfx identity use ci-deploy
+                  umask 077
+                  printf '%s' "$IC_IDENTITY_PEM" > /tmp/ci-identity.pem
+                  icp identity import ci-deploy --from-pem /tmp/ci-identity.pem --storage plaintext
+                  rm -f /tmp/ci-identity.pem
+                  icp identity default ci-deploy
 
             - name: Set up Python
               uses: actions/setup-python@v5
@@ -186,22 +196,25 @@ jobs:
         needs: ic-tests
         if: always()
         runs-on: ubuntu-latest
-        env:
-            DFX_WARNING: -mainnet_plaintext_identity
         steps:
-            - name: Install dfx
-              run: |
-                  DFXVM_INIT_YES=true DFX_VERSION=${{ env.DFX_VERSION }} sh -ci "$(curl -fsSL https://sdk.dfinity.org/install.sh)"
-                  echo "$HOME/.local/share/dfx/bin" >> $GITHUB_PATH
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
 
-            - name: Import DFX identity
+            - name: Install icp-cli
+              run: npm install -g @icp-sdk/icp-cli
+
+            - name: Import deploy identity
+              env:
+                  IC_IDENTITY_PEM: ${{ secrets.IC_IDENTITY_PEM }}
               run: |
-                  echo "${{ secrets.IC_IDENTITY_PEM }}" > /tmp/ci-identity.pem
-                  dfx identity import ci-deploy /tmp/ci-identity.pem --storage-mode plaintext 2>/dev/null || true
-                  rm /tmp/ci-identity.pem
-                  dfx identity use ci-deploy
+                  umask 077
+                  printf '%s' "$IC_IDENTITY_PEM" > /tmp/ci-identity.pem
+                  icp identity import ci-deploy --from-pem /tmp/ci-identity.pem --storage plaintext
+                  rm -f /tmp/ci-identity.pem
+                  icp identity default ci-deploy
 
             - name: Stop canister
               run: |
                   echo "Stopping canister $CANISTER_ID on $NETWORK..."
-                  dfx canister stop "$CANISTER_ID" --network "$NETWORK" || true
+                  icp canister stop "$CANISTER_ID" -n "$NETWORK" --identity ci-deploy || true

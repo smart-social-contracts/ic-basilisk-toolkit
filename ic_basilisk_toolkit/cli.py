@@ -14,9 +14,9 @@ Commands:
   deployments      List deployment history
 
 Options (exec, shell, sshd):
-  --canister <id>   Canister name or principal ID  [auto-detect from dfx.json]
+  --canister <id>   Canister name or principal ID  [auto-detect from icp.yaml]
   --network <net>   Network: local, ic, or URL     [default: local]
-  --identity <name> dfx identity to use            [default: current identity]
+  --identity <name> icp identity to use            [default: current identity]
 
 Other:
   --version        Print version info
@@ -40,7 +40,7 @@ Usage: basilisk-toolkit exec [options] <code>
        echo "code" | basilisk-toolkit exec [options]
 
 Options:
-  --canister <id>  Canister name or principal ID  [auto-detect from dfx.json]
+  --canister <id>  Canister name or principal ID  [auto-detect from icp.yaml]
   --network <net>  Network: local, ic, or URL     [default: local]
   -f <file>        Execute a local Python file instead of inline code
 
@@ -53,23 +53,46 @@ Examples:
 """
 
 
-def _detect_canister_from_dfx() -> str | None:
-    """Try to find the first basilisk canister name from dfx.json."""
-    if not Path("dfx.json").exists():
+def _is_principal(ident: str) -> bool:
+    """True if ident looks like a canister principal (vs an icp.yaml name)."""
+    return bool(re.match(r"^[a-z0-9]{5}(-[a-z0-9]{5})+-[a-z0-9]{3}$", ident or ""))
+
+
+def _network_flags(canister: str, network: str | None) -> list[str]:
+    """icp network selection: principals use -n <network>, names use -e <env>."""
+    if not network:
+        return []
+    return ["-n", network] if _is_principal(canister) else ["-e", network]
+
+
+def _detect_canister_from_icp() -> str | None:
+    """Try to find the first basilisk canister name from icp.yaml.
+
+    Prefers a canister installed from a Basilisk-built WASM (`.basilisk/` path);
+    otherwise falls back to the first declared canister.
+    """
+    path = Path("icp.yaml")
+    if not path.exists():
         return None
     try:
-        with open("dfx.json") as f:
-            dfx = json.load(f)
-        for name, config in dfx.get("canisters", {}).items():
-            if "basilisk" in config.get("build", ""):
-                return name
-    except Exception:
-        pass
-    return None
+        text = path.read_text()
+    except OSError:
+        return None
+    names: list[str] = []
+    current: str | None = None
+    basilisk_name: str | None = None
+    for line in text.splitlines():
+        m = re.match(r"\s*-\s*name:\s*['\"]?([A-Za-z0-9_-]+)", line)
+        if m:
+            current = m.group(1)
+            names.append(current)
+        elif current and ".basilisk/" in line and basilisk_name is None:
+            basilisk_name = current
+    return basilisk_name or (names[0] if names else None)
 
 
 def _parse_candid_string(raw: str) -> str:
-    """Parse a Candid text response from dfx canister call."""
+    """Parse a Candid text response from an icp canister call."""
     raw = raw.strip()
     # Remove outer parens: (text "...")
     if raw.startswith("(") and raw.endswith(")"):
@@ -133,21 +156,20 @@ def cmd_exec(args: list[str]):
 
     # Auto-detect canister if not specified
     if not canister:
-        canister = _detect_canister_from_dfx()
+        canister = _detect_canister_from_icp()
         if not canister:
             print(
-                "Error: --canister required (could not auto-detect from dfx.json)",
+                "Error: --canister required (could not auto-detect from icp.yaml)",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-    # Build dfx command
+    # Build icp command
     escaped_code = code.replace('"', '\\"').replace("\n", "\\n")
-    cmd = ["dfx", "canister", "call"]
+    cmd = ["icp", "canister", "call"]
     if identity:
         cmd.extend(["--identity", identity])
-    if network:
-        cmd.extend(["--network", network])
+    cmd.extend(_network_flags(canister, network))
     cmd.extend([canister, "__shell__", f'("{escaped_code}")'])
 
     try:
@@ -162,7 +184,7 @@ def cmd_exec(args: list[str]):
         print("Error: canister call timed out (120s)", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError:
-        print("Error: dfx not found. Install the DFINITY SDK.", file=sys.stderr)
+        print("Error: icp not found. Install icp-cli.", file=sys.stderr)
         sys.exit(1)
 
 

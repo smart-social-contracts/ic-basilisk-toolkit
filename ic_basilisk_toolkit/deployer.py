@@ -26,7 +26,7 @@ Required:
 Options:
   --deployer <id>      Deployer canister ID  [default: {default}]
   --network <net>      Network: local, ic     [default: ic]
-  --identity <name>    dfx identity to use    [default: current]
+  --identity <name>    icp identity to use    [default: current]
   --controllers <p>    Extra controller principals (comma-separated)
   --cycles <n>         Cycles to attach       [default: 500000000000]
   --init-arg <b64>     Base64-encoded init argument for the new canister
@@ -48,7 +48,7 @@ Required:
 Options:
   --deployer <id>      Deployer canister ID  [default: {default}]
   --network <net>      Network: local, ic     [default: ic]
-  --identity <name>    dfx identity to use    [default: current]
+  --identity <name>    icp identity to use    [default: current]
 
 Examples:
   basilisk upgrade --canister zlmui-fiaaa-aaaag-ayrza-cai --version 0.11.26
@@ -62,7 +62,7 @@ Usage: basilisk versions [options]
 Options:
   --deployer <id>      Deployer canister ID  [default: {default}]
   --network <net>      Network: local, ic     [default: ic]
-  --identity <name>    dfx identity to use    [default: current]
+  --identity <name>    icp identity to use    [default: current]
   --json               Output raw JSON
 """.format(default=DEFAULT_DEPLOYER_CANISTER)
 
@@ -74,17 +74,17 @@ Usage: basilisk deployments [options]
 Options:
   --deployer <id>      Deployer canister ID  [default: {default}]
   --network <net>      Network: local, ic     [default: ic]
-  --identity <name>    dfx identity to use    [default: current]
+  --identity <name>    icp identity to use    [default: current]
   --json               Output raw JSON
 """.format(default=DEFAULT_DEPLOYER_CANISTER)
 
 
 def _parse_candid_string(raw: str) -> str:
-    """Parse a Candid text response from dfx canister call."""
+    """Parse a Candid text response from an icp canister call."""
     raw = raw.strip()
     if raw.startswith("(") and raw.endswith(")"):
         raw = raw[1:-1].strip()
-    # Strip trailing comma (dfx sometimes outputs `"value",`)
+    # Strip trailing comma (the CLI sometimes outputs `"value",`)
     if raw.endswith(","):
         raw = raw[:-1].strip()
     if raw.startswith('"') and raw.endswith('"'):
@@ -93,13 +93,14 @@ def _parse_candid_string(raw: str) -> str:
     return raw
 
 
-def _dfx_call(deployer, method, arg, network, identity, is_query=False, timeout=300):
-    """Run a dfx canister call and return parsed output."""
-    cmd = ["dfx", "canister", "call"]
+def _icp_call(deployer, method, arg, network, identity, is_query=False, timeout=300):
+    """Run an icp canister call and return parsed output."""
+    cmd = ["icp", "canister", "call"]
     if identity:
         cmd.extend(["--identity", identity])
     if network:
-        cmd.extend(["--network", network])
+        # The deployer is always a principal, so target it by network.
+        cmd.extend(["-n", network])
     if is_query:
         cmd.append("--query")
     cmd.extend([deployer, method, arg])
@@ -114,7 +115,7 @@ def _dfx_call(deployer, method, arg, network, identity, is_query=False, timeout=
         print(f"Error: canister call timed out ({timeout}s)", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError:
-        print("Error: dfx not found. Install the DFINITY SDK.", file=sys.stderr)
+        print("Error: icp not found. Install icp-cli.", file=sys.stderr)
         sys.exit(1)
 
 
@@ -236,7 +237,7 @@ def cmd_deploy(args):
         print(f"  Cycles:     {cycles:,}")
     print()
 
-    raw = _dfx_call(
+    raw = _icp_call(
         deployer, "deploy", f'("{payload_json}")', network, identity, timeout=600
     )
 
@@ -301,7 +302,7 @@ def cmd_upgrade(args):
     print(f"  Network:    {network}")
     print()
 
-    raw = _dfx_call(
+    raw = _icp_call(
         deployer, "upgrade", f'("{payload}")', network, identity, timeout=600
     )
 
@@ -328,7 +329,7 @@ def cmd_versions(args):
 
     deployer, network, identity, raw_json, _ = _parse_common_args(args)
 
-    raw = _dfx_call(deployer, "list_versions", "()", network, identity, is_query=True)
+    raw = _icp_call(deployer, "list_versions", "()", network, identity, is_query=True)
 
     try:
         versions = json.loads(raw)
@@ -362,7 +363,7 @@ def cmd_deployments(args):
 
     deployer, network, identity, raw_json, _ = _parse_common_args(args)
 
-    raw = _dfx_call(
+    raw = _icp_call(
         deployer, "list_deployments", "()", network, identity, is_query=True
     )
 

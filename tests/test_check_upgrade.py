@@ -38,7 +38,7 @@ from ic_basilisk_toolkit.check_upgrade import (
 
 
 class TestCallBrowse:
-    """Test the dfx canister call wrapper."""
+    """Test the icp canister call wrapper."""
 
     def test_basic_call_structure(self):
         mock_result = MagicMock()
@@ -50,7 +50,7 @@ class TestCallBrowse:
 
         args = mock_run.call_args
         cmd = args[0][0]
-        assert "dfx" in cmd
+        assert "icp" in cmd
         assert "canister" in cmd
         assert "call" in cmd
         assert "my_canister" in cmd
@@ -65,7 +65,8 @@ class TestCallBrowse:
             _call_browse("c", {"action": "schema"}, network="ic")
 
         cmd = mock_run.call_args[0][0]
-        assert "--network" in cmd
+        # "c" is a canister name, so icp targets it by environment (-e).
+        assert "-e" in cmd
         assert "ic" in cmd
 
     def test_with_identity(self):
@@ -86,7 +87,7 @@ class TestCallBrowse:
         mock_result.stderr = "canister not found"
 
         with patch("subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError, match="dfx call failed"):
+            with pytest.raises(RuntimeError, match="icp call failed"):
                 _call_browse("bad_canister", {"action": "schema"})
 
     def test_parses_candid_text_response(self):
@@ -179,10 +180,10 @@ class TestCmdCheckUpgrade:
             cmd_check_upgrade(["--bogus"])
         assert exc_info.value.code == 1
 
-    def test_no_canister_no_dfx_json_exits(self, tmp_path, monkeypatch):
+    def test_no_canister_no_icp_yaml_exits(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         with patch("ic_basilisk_toolkit.check_upgrade._call_browse") as mock_browse:
-            # _detect_canister_from_dfx will fail, so it should exit
+            # _detect_canister_from_icp will fail, so it should exit
             with pytest.raises(SystemExit) as exc_info:
                 cmd_check_upgrade([])
             assert exc_info.value.code == 1

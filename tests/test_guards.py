@@ -16,6 +16,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from ic_basilisk_toolkit.shell import _net_flags
 from tests.conftest import _get_canister, _get_network, exec_on_canister
 
 # ===========================================================================
@@ -96,7 +97,7 @@ class TestControllerAccess:
     def test_controller_can_call_status(self, canister_reachable, canister, network):
         """Unguarded endpoint should always work."""
         r = subprocess.run(
-            ["dfx", "canister", "call", canister, "status", "--network", network],
+            ["icp", "canister", "call", canister, "status", *_net_flags(canister, network)],
             capture_output=True,
             text=True,
             timeout=30,
@@ -113,7 +114,7 @@ class TestControllerAccess:
 class TestNonControllerRejection:
     """Verify that a non-controller identity is rejected by guarded endpoints.
 
-    These tests create a temporary dfx identity that is NOT a controller
+    These tests create a temporary icp identity that is NOT a controller
     of the test canister, then attempt to call guarded endpoints.
     """
 
@@ -125,11 +126,11 @@ class TestNonControllerRejection:
         # Create temp identity (ignore error if already exists)
         subprocess.run(
             [
-                "dfx",
+                "icp",
                 "identity",
                 "new",
                 self.TEMP_IDENTITY,
-                "--storage-mode",
+                "--storage",
                 "plaintext",
             ],
             capture_output=True,
@@ -139,13 +140,13 @@ class TestNonControllerRejection:
         # Cleanup: switch back to default identity
         # (the original identity is restored by switching away from temp)
         subprocess.run(
-            ["dfx", "identity", "use", "ci-deploy"],
+            ["icp", "identity", "default", "ci-deploy"],
             capture_output=True,
             text=True,
         )
         # Remove temp identity
         subprocess.run(
-            ["dfx", "identity", "remove", self.TEMP_IDENTITY],
+            ["icp", "identity", "delete", self.TEMP_IDENTITY],
             capture_output=True,
             text=True,
         )
@@ -153,13 +154,12 @@ class TestNonControllerRejection:
     def _call_as_non_controller(self, canister, network, method, args=""):
         """Call a canister method using the non-controller identity."""
         cmd = [
-            "dfx",
+            "icp",
             "canister",
             "call",
             canister,
             method,
-            "--network",
-            network,
+            *_net_flags(canister, network),
             "--identity",
             self.TEMP_IDENTITY,
         ]

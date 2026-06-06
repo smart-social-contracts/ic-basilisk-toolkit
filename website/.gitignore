@@ -1,6 +1,4 @@
 .dfx/
-.basilisk/
-node_modules/
 canister_ids.json
 
 # icp-cli local replica cache (do NOT commit). The mainnet canister-ID

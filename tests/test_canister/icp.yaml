@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://github.com/dfinity/icp-cli/raw/refs/tags/v0.1.0/docs/schemas/icp-yaml-schema.json
+#
+# Toolkit IC-test canister — deployed with icp-cli (dfx is not used).
+# The Basilisk WASM is built out-of-band (CI / `python -m basilisk`) and
+# installed via the prebuilt recipe. candid:service metadata is embedded into
+# the WASM at build time by Basilisk.
+#
+# NOTE: the previous dfx.json also declared local ckbtc_ledger / ckbtc_indexer
+# canisters (downloaded ICRC-1 ledger + index WASMs) used only by the local
+# ckBTC wallet tests. That flow depended on a deploy_test_ledger.py helper not
+# present in this repo; it is intentionally not modelled here.
+
+canisters:
+  - name: shell_test
+    recipe:
+      type: "@dfinity/prebuilt@v2.0.0"
+      configuration:
+        path: .basilisk/shell_test/shell_test.wasm
+        compress: true

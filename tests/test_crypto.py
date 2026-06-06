@@ -6,7 +6,7 @@ Unit tests (TestFormatHelpers, TestGroupCodeGeneration, TestCryptoCodeGeneration
 TestHandleGroupDispatch, TestHandleCryptoDispatch) run without a canister.
 
 Integration tests (TestGroup*, TestCrypto*) run against a live canister
-on IC mainnet via dfx.
+on IC mainnet via icp.
 """
 
 import os

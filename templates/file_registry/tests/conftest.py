@@ -23,9 +23,9 @@ CANISTER_NAME = "ic_file_registry"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _dfx(args, cwd=REPO_ROOT, check=True, timeout=120, input=None):
+def _icp(args, cwd=REPO_ROOT, check=True, timeout=120, input=None):
     result = subprocess.run(
-        ["dfx"] + args,
+        ["icp"] + args,
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -34,7 +34,7 @@ def _dfx(args, cwd=REPO_ROOT, check=True, timeout=120, input=None):
     )
     if check and result.returncode != 0:
         raise RuntimeError(
-            f"dfx {' '.join(args)} failed:\n"
+            f"icp {' '.join(args)} failed:\n"
             f"stdout: {result.stdout[-500:]}\n"
             f"stderr: {result.stderr[-500:]}"
         )
@@ -50,17 +50,17 @@ def call_canister(method, args=None, update=False):
     cmd.append(method)
     if args is not None:
         cmd.append(f'("{args}")')
-    result = _dfx(cmd)
+    result = _icp(cmd)
     return _parse(result.stdout)
 
 
 def _parse(output):
-    """Parse dfx Candid text output: (\"JSON\") -> dict/list."""
+    """Parse icp Candid text output: (\"JSON\") -> dict/list."""
     text = output.strip()
     if text.startswith('("') and text.endswith('")'):
         inner = text[2:-2].replace('\\"', '"').replace("\\\\", "\\").replace("\\n", "\n")
         return json.loads(inner)
-    # May be returned as unquoted text in some dfx versions
+    # May be returned as unquoted text in some icp versions
     try:
         return json.loads(text.strip('()').strip('"'))
     except Exception:
@@ -73,30 +73,14 @@ def _parse(output):
 
 @pytest.fixture(scope="session")
 def replica():
-    """Start a local PocketIC replica for the test session."""
-    # Configure a persistent local network so all dfx calls resolve the same replica
-    dfx_config_dir = os.path.expanduser("~/.config/dfx")
-    os.makedirs(dfx_config_dir, exist_ok=True)
-    networks_json = os.path.join(dfx_config_dir, "networks.json")
-    wrote = False
-    if not os.path.exists(networks_json):
-        with open(networks_json, "w") as f:
-            json.dump({"local": {"type": "persistent", "replica": {"subnet_type": "system"}}}, f)
-        wrote = True
-
-    _dfx(["start", "--clean", "--background", "--pocketic"],
-         cwd="/tmp", timeout=300,
-         check=False)  # may already be running
+    """Start a local replica for the test session (icp-cli)."""
+    # Tolerant start: a network may already be running locally / in CI.
+    _icp(["network", "start", "-d"], timeout=300, check=False)
     time.sleep(3)
 
     yield "local"
 
-    _dfx(["stop"], cwd="/tmp", check=False)
-    if wrote:
-        try:
-            os.remove(networks_json)
-        except OSError:
-            pass
+    _icp(["network", "stop"], check=False)
 
 
 @pytest.fixture(scope="session")
@@ -117,6 +101,6 @@ def canister(replica):
         pytest.fail(f"Build failed:\n{result.stderr[-1000:]}")
 
     # Deploy
-    _dfx(["deploy", CANISTER_NAME], timeout=120)
+    _icp(["deploy", CANISTER_NAME], timeout=120)
 
     yield CANISTER_NAME

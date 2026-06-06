@@ -486,11 +486,11 @@ def get_public_key() -> Async[text]:
 # Withdraw donated tokens to a specified principal (controller-only).
 # The guard is applied in main.py via re-decoration (same pattern as read_secret_notes).
 #
-# Usage with dfx:
-#   dfx canister call tip_jar_backend withdraw '("ckBTC", "xxxxx-xxxxx-xxxxx-xxxxx-cai", 100000)' --network ic
-#   dfx canister call tip_jar_backend withdraw '("ckUSDC", "xxxxx-xxxxx-xxxxx-xxxxx-cai", 5000000)' --network ic
-#   dfx canister call tip_jar_backend withdraw '("ICP", "xxxxx-xxxxx-xxxxx-xxxxx-cai", 10000000)' --network ic
-#   dfx canister call tip_jar_backend withdraw '("ckETH", "xxxxx-xxxxx-xxxxx-xxxxx-cai", 1000000000000000)' --network ic
+# Usage with icp-cli:
+#   icp canister call tip_jar_backend withdraw '("ckBTC", "xxxxx-xxxxx-xxxxx-xxxxx-cai", 100000)' -e ic
+#   icp canister call tip_jar_backend withdraw '("ckUSDC", "xxxxx-xxxxx-xxxxx-xxxxx-cai", 5000000)' -e ic
+#   icp canister call tip_jar_backend withdraw '("ICP", "xxxxx-xxxxx-xxxxx-xxxxx-cai", 10000000)' -e ic
+#   icp canister call tip_jar_backend withdraw '("ckETH", "xxxxx-xxxxx-xxxxx-xxxxx-cai", 1000000000000000)' -e ic
 #
 # Amounts are in smallest units: satoshis (ckBTC), wei (ckETH), e8s (ICP), 1e-6 (ckUSDC).
 @update

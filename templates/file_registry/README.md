@@ -89,25 +89,26 @@ python3 scripts/upload_file.py \
 
 ## Deploy
 
+Deployed with [`icp-cli`](https://github.com/dfinity/icp-cli) (`icp.yaml`); **dfx is not used**.
+
 ```bash
 # Install deps
-pip install ic-basilisk
+pip install ic-basilisk-toolkit
 
-# Local
-dfx start --background
-dfx deploy
+# Build backend WASM + deploy (local)
+make deploy
 
 # Mainnet
-dfx deploy --network ic
-
-# Frontend
-cd frontend && npm install && npm run build
-dfx deploy ic_file_registry_frontend --network ic
+make deploy-ic
 ```
 
-Set `VITE_CANISTER_ID` to your backend canister ID before building the frontend:
+Under the hood `make deploy` builds the backend WASM and the SvelteKit frontend,
+then runs `icp deploy` (`make deploy-ic` uses `icp deploy -e ic`).
+
+`make deploy-ic` injects the mainnet backend canister id into the frontend build.
+For a custom backend, set `VITE_CANISTER_ID` yourself:
 ```bash
-VITE_CANISTER_ID=<your-canister-id> npm run build
+VITE_CANISTER_ID=<your-canister-id> npm --prefix frontend run build
 ```
 
 ## File size limits

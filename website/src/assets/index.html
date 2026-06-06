@@ -43,11 +43,13 @@
         <li><strong>Persistent filesystem</strong> — standard <code>open()</code> / <code>os</code> calls, automatically backed by stable memory.</li>
         <li><strong>IC system APIs</strong> — <code>ic.caller()</code>, <code>ic.time()</code>, inter-canister calls, timers, Candid types.</li>
       </ul>
-      <pre class="code"><span class="comment"># Install and scaffold a new project</span>
+      <pre class="code"><span class="comment"># Install and scaffold a new project (icp-cli)</span>
 pip install ic-basilisk
-basilisk new my-canister &amp;&amp; cd my-canister
-dfx start --background
-dfx deploy</pre>
+icp new my-canister --git https://github.com/smart-social-contracts/basilisk --subfolder icp-cli/templates/hello-world
+cd my-canister
+pip install -r requirements.txt
+icp network start -d
+icp deploy</pre>
     </section>
 
     <!-- What is the Toolkit -->

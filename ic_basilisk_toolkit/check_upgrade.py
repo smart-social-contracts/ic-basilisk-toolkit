@@ -15,17 +15,18 @@ def _call_browse(
     canister: str, query: dict, network: str | None = None, identity: str | None = None
 ) -> dict:
     """Call __browse__ on a canister and return the parsed JSON response."""
+    from ic_basilisk_toolkit.cli import _network_flags
+
     q_str = json.dumps(query).replace('"', r"\"")
-    cmd = ["dfx", "canister", "call"]
+    cmd = ["icp", "canister", "call"]
     if identity:
         cmd.extend(["--identity", identity])
-    if network:
-        cmd.extend(["--network", network])
-    cmd.extend([canister, "__browse__", f'("{q_str}")'])
+    cmd.extend(_network_flags(canister, network))
+    cmd.extend([canister, "__browse__", f'("{q_str}")', "--query"])
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
-        raise RuntimeError(f"dfx call failed: {result.stderr.strip()}")
+        raise RuntimeError(f"icp call failed: {result.stderr.strip()}")
 
     raw = result.stdout.strip()
     # Parse Candid text response: ("...",) or (text "...")
@@ -154,12 +155,12 @@ def cmd_check_upgrade(args: list[str]):
             sys.exit(1)
 
     if not canister:
-        from ic_basilisk_toolkit.cli import _detect_canister_from_dfx
+        from ic_basilisk_toolkit.cli import _detect_canister_from_icp
 
-        canister = _detect_canister_from_dfx()
+        canister = _detect_canister_from_icp()
         if not canister:
             print(
-                "Error: --canister required (could not auto-detect from dfx.json)",
+                "Error: --canister required (could not auto-detect from icp.yaml)",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -260,9 +261,9 @@ local Entity class definitions. Reports which changes are safe (auto-
 migratable) and which require a migrate() method.
 
 Options:
-  --canister <id>   Canister name or principal ID  [auto-detect from dfx.json]
+  --canister <id>   Canister name or principal ID  [auto-detect from icp.yaml]
   --network <net>   Network: local, ic, or URL     [default: local]
-  --identity <name> dfx identity to use            [default: current identity]
+  --identity <name> icp identity to use            [default: current identity]
   --project <dir>   Project directory with src/     [default: current dir]
   -v, --verbose     Print full schemas and write them to .basilisk/schemas/
   --output-dir <d>  Directory to write schema files  [default: .basilisk/schemas/]
