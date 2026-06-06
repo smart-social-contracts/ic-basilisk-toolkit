@@ -147,8 +147,8 @@ jobs:
               if: ${{ inputs.template == 'tip_jar' || inputs.template == 'all' }}
               working-directory: templates/tip_jar
               run: |
-                  icp deploy tip_jar_backend -e "$NETWORK" --identity ci-deploy --mode "${{ inputs.mode }}" -y
-                  icp deploy tip_jar_frontend -e "$NETWORK" --identity ci-deploy -y
+                  icp deploy tip_jar_backend -e "$NETWORK" --identity ci-deploy --mode "${{ inputs.mode }}" -y --project-root-override="$(pwd)"
+                  icp deploy tip_jar_frontend -e "$NETWORK" --identity ci-deploy -y --project-root-override="$(pwd)"
                   icp canister call tip_jar_backend status -e "$NETWORK" --identity ci-deploy || echo "⚠️ status call failed"
                   echo "Frontend: https://$TIP_JAR_FRONTEND_CANISTER_ID.icp0.io"
 
@@ -174,8 +174,8 @@ jobs:
               if: ${{ inputs.template == 'file_registry' || inputs.template == 'all' }}
               working-directory: templates/file_registry
               run: |
-                  icp deploy ic_file_registry -e "$NETWORK" --identity ci-deploy --mode "${{ inputs.mode }}" -y
-                  icp deploy ic_file_registry_frontend -e "$NETWORK" --identity ci-deploy -y
+                  icp deploy ic_file_registry -e "$NETWORK" --identity ci-deploy --mode "${{ inputs.mode }}" -y --project-root-override="$(pwd)"
+                  icp deploy ic_file_registry_frontend -e "$NETWORK" --identity ci-deploy -y --project-root-override="$(pwd)"
                   icp canister call ic_file_registry status -e "$NETWORK" --identity ci-deploy || echo "⚠️ status call failed"
                   echo "Frontend: https://$FILE_REGISTRY_FRONTEND_CANISTER_ID.icp0.io"
 

@@ -51,7 +51,7 @@ jobs:
                       echo "::error::website/.icp/data/mappings/ic.ids.json is missing. Run 'icp deploy -e ic basilisk_website' locally once and commit it."
                       exit 1
                   fi
-                  icp deploy basilisk_website -e "$NETWORK" --identity ci-deploy -y
+                  icp deploy basilisk_website -e "$NETWORK" --identity ci-deploy -y --project-root-override="$(pwd)"
                   CANISTER_ID=$(jq -r '.basilisk_website' .icp/data/mappings/ic.ids.json)
                   echo "CANISTER_ID=$CANISTER_ID" >> $GITHUB_ENV
                   echo "Deployed: https://$CANISTER_ID.icp0.io"
