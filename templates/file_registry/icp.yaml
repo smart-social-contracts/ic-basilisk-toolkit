@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://github.com/dfinity/icp-cli/raw/refs/tags/v0.1.0/docs/schemas/icp-yaml-schema.json
+#
+# File Registry template — deployed with icp-cli (dfx is not used).
+# The Basilisk backend WASM is built out-of-band (see `make build`) and
+# installed via the prebuilt recipe; the SvelteKit frontend is built into
+# frontend/dist by `make` (so VITE_CANISTER_ID can be injected) and served
+# by the asset-canister recipe.
+
+canisters:
+  - name: ic_file_registry
+    recipe:
+      type: "@dfinity/prebuilt@v2.0.0"
+      configuration:
+        path: .basilisk/ic_file_registry/ic_file_registry.wasm
+        shrink: true
+        compress: true
+
+  - name: ic_file_registry_frontend
+    recipe:
+      type: "@dfinity/asset-canister@v2.1.0"
+      configuration:
+        dir: frontend/dist

@@ -1797,7 +1797,7 @@ class TestWget:
         url = "https://this-domain-does-not-exist-9999.example.com/file.txt"
         dest = "/test_wget_bad.txt"
         result = _task_magic(f"%wget {url} {dest}", canister, network)
-        # Should contain error info (either dfx error or download failed)
+        # Should contain error info (either icp error or download failed)
         assert (
             "error" in result.lower() or "failed" in result.lower() or "Err" in result
         )
@@ -2095,8 +2095,10 @@ class TestPersistentFileStorage:
         """
         import time as _time
 
+        from ic_basilisk_toolkit.shell import _net_flags
+
         cmd = [
-            "dfx",
+            "icp",
             "canister",
             "install",
             canister,
@@ -2104,10 +2106,9 @@ class TestPersistentFileStorage:
             "upgrade",
             "--wasm",
             self._WASM_PATH,
-            "--upgrade-unchanged",
+            "-y",
+            *_net_flags(canister, network),
         ]
-        if network:
-            cmd.extend(["--network", network])
         for attempt in range(retries + 1):
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)

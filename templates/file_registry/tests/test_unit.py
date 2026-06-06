@@ -1,7 +1,7 @@
 """
 Unit tests for ic-file-registry pure helper functions.
 
-These tests mock basilisk imports so no canister or dfx is needed.
+These tests mock basilisk imports so no canister or icp is needed.
 Run with: pytest tests/test_unit.py -v
 """
 

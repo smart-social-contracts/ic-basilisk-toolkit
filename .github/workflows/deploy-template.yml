@@ -1,6 +1,8 @@
 # Deploy Template — build and deploy a basilisk toolkit template to IC mainnet.
 #
 # Triggered manually. Choose which template(s) to deploy and the install mode.
+# Deployed with icp-cli; canister IDs come from each template's committed
+# .icp/data mappings so every run targets the same canisters.
 
 name: Deploy Template
 
@@ -17,7 +19,7 @@ on:
                     - all
                 default: tip_jar
             mode:
-                description: "Install mode"
+                description: "Install mode (reinstall WIPES backend state)"
                 required: true
                 type: choice
                 options:
@@ -27,7 +29,6 @@ on:
 
 env:
     PYTHON_VERSION: "3.13"
-    DFX_VERSION: "0.30.2"
     NETWORK: ic
     TIP_JAR_BACKEND_CANISTER_ID: o6z3g-eiaaa-aaaau-agj6q-cai
     TIP_JAR_FRONTEND_CANISTER_ID: ox2q2-saaaa-aaaau-agj7a-cai
@@ -38,7 +39,6 @@ jobs:
     deploy:
         runs-on: ubuntu-latest
         env:
-            DFX_WARNING: -mainnet_plaintext_identity
             WASI_SDK_VERSION: "24"
             WASI_SDK_PATH: /home/runner/.local/share/wasi-sdk
             BASILISK_PYTHON_BACKEND: cpython
@@ -51,17 +51,25 @@ jobs:
               with:
                   python-version: ${{ env.PYTHON_VERSION }}
 
-            - name: Install dfx
-              run: |
-                  DFXVM_INIT_YES=true DFX_VERSION=${{ env.DFX_VERSION }} sh -ci "$(curl -fsSL https://sdk.dfinity.org/install.sh)"
-                  echo "$HOME/.local/share/dfx/bin" >> $GITHUB_PATH
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
 
-            - name: Import DFX identity
+            - name: Install icp-cli + ic-wasm
+              run: npm install -g @icp-sdk/icp-cli @icp-sdk/ic-wasm
+
+            - name: Import deploy identity
+              env:
+                  IC_IDENTITY_PEM: ${{ secrets.IC_IDENTITY_PEM }}
               run: |
-                  echo "${{ secrets.IC_IDENTITY_PEM }}" > /tmp/ci-identity.pem
-                  dfx identity import ci-deploy /tmp/ci-identity.pem --storage-mode plaintext 2>/dev/null || true
-                  rm /tmp/ci-identity.pem
-                  dfx identity use ci-deploy
+                  if [ -z "$IC_IDENTITY_PEM" ]; then
+                      echo "::error::IC_IDENTITY_PEM secret is not set."; exit 1
+                  fi
+                  umask 077
+                  printf '%s' "$IC_IDENTITY_PEM" > /tmp/ci-identity.pem
+                  icp identity import ci-deploy --from-pem /tmp/ci-identity.pem --storage plaintext
+                  rm -f /tmp/ci-identity.pem
+                  echo "Deploy principal: $(icp identity principal --identity ci-deploy)"
 
             - name: Install basilisk + toolkit
               run: |
@@ -132,34 +140,16 @@ jobs:
               if: ${{ inputs.template == 'tip_jar' || inputs.template == 'all' }}
               working-directory: templates/tip_jar
               run: |
-                  CANISTER_CANDID_PATH=./tip_jar_backend.did python -m basilisk tip_jar_backend src/backend/main.py
+                  make build
                   ls -la .basilisk/tip_jar_backend/tip_jar_backend.wasm
 
-            - name: Deploy backend (tip_jar, ${{ inputs.mode }})
-              if: ${{ inputs.template == 'tip_jar' || inputs.template == 'all' }}
-              working-directory: templates/tip_jar
-              env:
-                  BACKEND_CANISTER_ID: ${{ env.TIP_JAR_BACKEND_CANISTER_ID }}
-              run: |
-                  MODE="${{ inputs.mode }}"
-                  if [ "$MODE" = "reinstall" ]; then
-                      echo "Stopping canister $BACKEND_CANISTER_ID..."
-                      dfx canister stop "$BACKEND_CANISTER_ID" --network "$NETWORK" 2>/dev/null || true
-                      sleep 3
-                  fi
-                  dfx canister install "$BACKEND_CANISTER_ID" \
-                      --mode "$MODE" --yes --network "$NETWORK" \
-                      --wasm .basilisk/tip_jar_backend/tip_jar_backend.wasm
-                  if [ "$MODE" = "reinstall" ]; then
-                      dfx canister start "$BACKEND_CANISTER_ID" --network "$NETWORK"
-                  fi
-                  dfx canister call "$BACKEND_CANISTER_ID" status --network "$NETWORK" || echo "⚠️ status call failed"
-
-            - name: Deploy frontend (tip_jar)
+            - name: Deploy tip_jar (${{ inputs.mode }})
               if: ${{ inputs.template == 'tip_jar' || inputs.template == 'all' }}
               working-directory: templates/tip_jar
               run: |
-                  dfx deploy tip_jar_frontend --network "$NETWORK" --upgrade-unchanged
+                  icp deploy tip_jar_backend -e "$NETWORK" --identity ci-deploy --mode "${{ inputs.mode }}" -y
+                  icp deploy tip_jar_frontend -e "$NETWORK" --identity ci-deploy -y
+                  icp canister call tip_jar_backend status -e "$NETWORK" --identity ci-deploy || echo "⚠️ status call failed"
                   echo "Frontend: https://$TIP_JAR_FRONTEND_CANISTER_ID.icp0.io"
 
             # ── file_registry ────────────────────────────────────────────────
@@ -168,50 +158,25 @@ jobs:
               if: ${{ inputs.template == 'file_registry' || inputs.template == 'all' }}
               working-directory: templates/file_registry
               run: |
-                  CANISTER_CANDID_PATH=./ic_file_registry.did python3 -m basilisk ic_file_registry src/main.py
+                  make build
                   ls -la .basilisk/ic_file_registry/ic_file_registry.wasm
-
-            - name: Deploy backend (file_registry, ${{ inputs.mode }})
-              if: ${{ inputs.template == 'file_registry' || inputs.template == 'all' }}
-              working-directory: templates/file_registry
-              env:
-                  BACKEND_CANISTER_ID: ${{ env.FILE_REGISTRY_BACKEND_CANISTER_ID }}
-              run: |
-                  MODE="${{ inputs.mode }}"
-                  if [ "$MODE" = "reinstall" ]; then
-                      echo "Stopping canister $BACKEND_CANISTER_ID..."
-                      dfx canister stop "$BACKEND_CANISTER_ID" --network "$NETWORK" 2>/dev/null || true
-                      sleep 3
-                  fi
-                  dfx canister install "$BACKEND_CANISTER_ID" \
-                      --mode "$MODE" --yes --network "$NETWORK" \
-                      --wasm .basilisk/ic_file_registry/ic_file_registry.wasm
-                  if [ "$MODE" = "reinstall" ]; then
-                      dfx canister start "$BACKEND_CANISTER_ID" --network "$NETWORK"
-                  fi
-                  dfx canister call "$BACKEND_CANISTER_ID" status --network "$NETWORK" || echo "⚠️ status call failed"
-
-            - name: Setup Node.js (file_registry)
-              if: ${{ inputs.template == 'file_registry' || inputs.template == 'all' }}
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "20"
 
             - name: Build frontend (file_registry)
               if: ${{ inputs.template == 'file_registry' || inputs.template == 'all' }}
-              working-directory: templates/file_registry/frontend
+              working-directory: templates/file_registry
               env:
                   VITE_CANISTER_ID: ${{ env.FILE_REGISTRY_BACKEND_CANISTER_ID }}
               run: |
-                  npm ci
-                  npm run build
-                  ls -la dist/
+                  make build-frontend
+                  ls -la frontend/dist/
 
-            - name: Deploy frontend (file_registry)
+            - name: Deploy file_registry (${{ inputs.mode }})
               if: ${{ inputs.template == 'file_registry' || inputs.template == 'all' }}
               working-directory: templates/file_registry
               run: |
-                  dfx deploy ic_file_registry_frontend --network "$NETWORK" --upgrade-unchanged
+                  icp deploy ic_file_registry -e "$NETWORK" --identity ci-deploy --mode "${{ inputs.mode }}" -y
+                  icp deploy ic_file_registry_frontend -e "$NETWORK" --identity ci-deploy -y
+                  icp canister call ic_file_registry status -e "$NETWORK" --identity ci-deploy || echo "⚠️ status call failed"
                   echo "Frontend: https://$FILE_REGISTRY_FRONTEND_CANISTER_ID.icp0.io"
 
             # ── summary ──────────────────────────────────────────────────────
@@ -230,3 +195,7 @@ jobs:
                       echo "- **file_registry backend**: [$FILE_REGISTRY_BACKEND_CANISTER_ID](https://dashboard.internetcomputer.org/canister/$FILE_REGISTRY_BACKEND_CANISTER_ID)" >> $GITHUB_STEP_SUMMARY
                       echo "- **file_registry frontend**: [https://$FILE_REGISTRY_FRONTEND_CANISTER_ID.icp0.io](https://$FILE_REGISTRY_FRONTEND_CANISTER_ID.icp0.io)" >> $GITHUB_STEP_SUMMARY
                   fi
+
+            - name: Remove identity material
+              if: always()
+              run: rm -f /tmp/ci-identity.pem

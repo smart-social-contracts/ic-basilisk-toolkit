@@ -215,7 +215,7 @@ def main():
     )
     parser.add_argument("--canister", required=True, help="Canister name or ID")
     parser.add_argument("--network", default=None, help="Network: local, ic, or URL")
-    parser.add_argument("--identity", default=None, help="dfx identity to use")
+    parser.add_argument("--identity", default=None, help="icp identity to use")
     parser.add_argument(
         "--port", type=int, default=2222, help="SSH port (default: 2222)"
     )

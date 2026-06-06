@@ -12,7 +12,7 @@ Pure static assets — a single IC assets canister, no backend.
 
 ```
 website/
-├── dfx.json
+├── icp.yaml
 └── src/
     └── assets/
         ├── index.html
@@ -33,20 +33,15 @@ cd src/assets && python -m http.server 8000
 
 ## Deploy to IC
 
-First-time deploy:
+Deployed with [icp-cli](https://github.com/dfinity/icp-cli) (`icp.yaml`); **dfx is not used**.
 
 ```bash
 # from this directory (ic-basilisk-toolkit/website/)
-dfx deploy --network ic basilisk_website
+icp deploy -e ic basilisk_website -y
 ```
 
-`dfx` will write the new canister id to `canister_ids.json`. Commit that file.
-
-Subsequent deploys (asset-only changes):
-
-```bash
-dfx deploy --network ic basilisk_website
-```
+Canister IDs live in `.icp/data/mappings/ic.ids.json` (committed so every deploy
+targets the same canister).
 
 ### CI auto-deploy
 
@@ -54,7 +49,7 @@ dfx deploy --network ic basilisk_website
 redeploys this canister on every push to `main` that touches `website/**`, or
 on manual dispatch. It requires:
 
-- `canister_ids.json` committed in `website/` (written by the first local deploy)
+- `.icp/data/mappings/ic.ids.json` committed in `website/` (written by the first local deploy)
 - Repository secret `IC_IDENTITY_PEM` — PEM-encoded identity that controls the canister
 
 ### Cycles monitoring (CycleOps)
@@ -70,7 +65,7 @@ Controllers of `basilisk_website`:
 - `cpbhu-5iaaa-aaaad-aalta-cai` — CycleOps V3 blackhole (required for monitoring)
 
 To adjust the top-up rule or remove the canister from monitoring, use the
-CycleOps dashboard or the `dfx canister call qc4nb-ciaaa-aaaap-aawqa-cai ...`
+CycleOps dashboard or the `icp canister call qc4nb-ciaaa-aaaap-aawqa-cai ...`
 API pattern documented in the realms repo
 (`realms/scripts/update_cycleops_thresholds.sh`).
 
@@ -79,13 +74,13 @@ API pattern documented in the realms repo
 Currently `ic-basilisk.tech` points at the `tip_jar_frontend` canister
 (`ox2q2-saaaa-aaaau-agj7a-cai`). Migrating it to this new canister:
 
-1. **Deploy this canister first.** Get its id from `canister_ids.json` after
-   `dfx deploy --network ic basilisk_website`.
+1. **Deploy this canister first.** Get its id from `.icp/data/mappings/ic.ids.json` after
+   `icp deploy -e ic basilisk_website`.
 
 2. **Remove the domain from the old canister:**
    - Delete `ic-basilisk.tech` from
      `ic-basilisk-toolkit/templates/tip_jar/src/frontend/assets/.well-known/ic-domains`.
-   - Redeploy the tip jar frontend: `dfx deploy --network ic tip_jar_frontend`.
+   - Redeploy the tip jar frontend: `icp deploy -e ic tip_jar_frontend`.
    - Remove the old registration from the boundary node:
      ```bash
      curl -X DELETE https://icp0.io/registrations/<REGISTRATION_ID>

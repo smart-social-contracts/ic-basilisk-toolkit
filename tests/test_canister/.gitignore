@@ -2,3 +2,4 @@
 .basilisk/
 node_modules/
 *.did
+/.icp/

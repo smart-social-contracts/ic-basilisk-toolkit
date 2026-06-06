@@ -65,13 +65,12 @@ def _vetkey_name():
 
 
 def _local_canister_exec(code, canister, network):
-    """Execute code on canister via dfx."""
-    from ic_basilisk_toolkit.shell import _parse_candid
+    """Execute code on canister via icp."""
+    from ic_basilisk_toolkit.shell import _net_flags, _parse_candid
 
     escaped = code.replace('"', '\\"').replace("\n", "\\n")
-    cmd = ["dfx", "canister", "call"]
-    if network:
-        cmd.extend(["--network", network])
+    cmd = ["icp", "canister", "call"]
+    cmd.extend(_net_flags(canister, network))
     cmd.extend([canister, "__shell__", f'("{escaped}")'])
     try:
         r = subprocess.run(
@@ -82,12 +81,12 @@ def _local_canister_exec(code, canister, network):
             cwd=_TEST_CANISTER_DIR if os.path.isdir(_TEST_CANISTER_DIR) else None,
         )
         if r.returncode != 0:
-            return f"[dfx error] {r.stderr.strip()}"
+            return f"[icp error] {r.stderr.strip()}"
         return _parse_candid(r.stdout)
     except subprocess.TimeoutExpired:
         return "[error] canister call timed out (120s)"
     except FileNotFoundError:
-        return "[error] dfx not found"
+        return "[error] icp not found"
 
 
 def _write_file_on_canister(path, content, canister, network):
@@ -113,7 +112,7 @@ def _extract_task_id(output):
 
 
 def _task_magic(cmd, canister, network):
-    """Run a magic command via dfx by converting it to code."""
+    """Run a magic command via icp by converting it to code."""
     from ic_basilisk_toolkit.shell import (
         _TASK_RESOLVE,
         _task_add_step_code,

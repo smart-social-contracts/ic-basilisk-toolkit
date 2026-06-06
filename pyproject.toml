@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ic-basilisk-toolkit"
-version = "0.2.0"
+version = "0.4.0"
 description = "Basilisk Toolkit — Services, shell, and SFTP for IC Python canisters"
 readme = "README.md"
 authors = [
@@ -25,7 +25,7 @@ keywords = ["internet-computer", "icp", "canister", "basilisk", "toolkit", "shel
 requires-python = ">=3.10"
 dependencies = [
     "ic-basilisk>=0.11.0",
-    "ic-python-db>=0.7.7",
+    "ic-python-db>=0.9.0",
     "ic-python-logging>=0.3.1",
 ]
 

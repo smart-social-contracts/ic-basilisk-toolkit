@@ -1,3 +1,11 @@
 .dfx/
 .basilisk/
 node_modules/
+frontend/dist/
+frontend/.svelte-kit/
+canister_ids.json
+
+# icp-cli local replica cache (do NOT commit). The mainnet canister-ID
+# mappings live in .icp/data and MUST be kept, so they are re-included.
+/.icp/*
+!/.icp/data/

@@ -125,7 +125,7 @@ Use `--output-dir <dir>` to write schema files to a custom location.
 Even if you skip `check-upgrade`, Basilisk auto-injects a safety net into `post_upgrade`: if a breaking change is deployed without `migrate()`, the IC traps and atomically rolls back — your canister stays on the old code with all data intact.
 
 ```
-$ dfx deploy
+$ icp deploy
 ...
 🎉 Built canister my_app
 ...

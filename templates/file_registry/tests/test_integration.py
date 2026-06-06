@@ -1,7 +1,7 @@
 """
 Integration tests for ic-file-registry canister.
 
-Requires a running local dfx replica and the canister deployed.
+Requires a running local icp replica and the canister deployed.
 The `canister` fixture (conftest.py) handles both automatically.
 
 Run with:

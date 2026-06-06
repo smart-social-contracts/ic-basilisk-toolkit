@@ -1,8 +1,0 @@
-{
-    "canisters": {
-        "basilisk_website": {
-            "type": "assets",
-            "source": ["src/assets"]
-        }
-    }
-}

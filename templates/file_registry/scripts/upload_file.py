@@ -29,10 +29,11 @@ import sys
 CHUNK_SIZE = 500_000  # 500 KB per chunk (safe below 2 MB message limit)
 
 
-def dfx_call(canister_id: str, method: str, arg: str, network: str = "local") -> str:
+def icp_call(canister_id: str, method: str, arg: str, network: str = "local") -> str:
     cmd = [
-        "dfx", "canister", "call",
-        "--network", network,
+        "icp", "canister", "call",
+        # canister_id is a principal, so target it by network (-n).
+        "-n", network,
         canister_id, method,
         f'("{arg}")',
     ]
@@ -59,7 +60,7 @@ def upload_single(canister_id: str, namespace: str, path: str,
             "content_b64": base64.b64encode(file_bytes).decode("ascii"),
             "content_type": content_type,
         })
-        raw = dfx_call(canister_id, "store_file", payload, network)
+        raw = icp_call(canister_id, "store_file", payload, network)
         result = json.loads(raw)
         if "error" in result:
             print(f"FAILED: {result['error']}")
@@ -80,7 +81,7 @@ def upload_single(canister_id: str, namespace: str, path: str,
                 "data_b64": base64.b64encode(chunk).decode("ascii"),
                 "content_type": content_type,
             })
-            raw = dfx_call(canister_id, "store_file_chunk", payload, network)
+            raw = icp_call(canister_id, "store_file_chunk", payload, network)
             result = json.loads(raw)
             if "error" in result:
                 print(f"  chunk {i}: FAILED: {result['error']}")
@@ -89,7 +90,7 @@ def upload_single(canister_id: str, namespace: str, path: str,
 
         # Finalize
         payload = json.dumps({"namespace": namespace, "path": path})
-        raw = dfx_call(canister_id, "finalize_chunked_file", payload, network)
+        raw = icp_call(canister_id, "finalize_chunked_file", payload, network)
         result = json.loads(raw)
         if "error" in result:
             print(f"  finalize FAILED: {result['error']}")
