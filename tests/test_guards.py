@@ -97,7 +97,14 @@ class TestControllerAccess:
     def test_controller_can_call_status(self, canister_reachable, canister, network):
         """Unguarded endpoint should always work."""
         r = subprocess.run(
-            ["icp", "canister", "call", canister, "status", *_net_flags(canister, network)],
+            [
+                "icp",
+                "canister",
+                "call",
+                canister,
+                "status",
+                *_net_flags(canister, network),
+            ],
             capture_output=True,
             text=True,
             timeout=30,

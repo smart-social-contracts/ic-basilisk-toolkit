@@ -87,7 +87,11 @@ def _get_network():
 def _icp_local_id(name):
     """Look up a locally-deployed canister ID from icp-cli's id mappings."""
     mapping = os.path.join(
-        os.path.dirname(__file__), "test_canister", ".icp", "data", "mappings",
+        os.path.dirname(__file__),
+        "test_canister",
+        ".icp",
+        "data",
+        "mappings",
         "local.ids.json",
     )
     try:
