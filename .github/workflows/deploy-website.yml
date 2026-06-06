@@ -29,7 +29,7 @@ jobs:
                   node-version: "22"
 
             - name: Install icp-cli + ic-wasm
-              run: npm install -g @icp-sdk/icp-cli @icp-sdk/ic-wasm
+              run: npm install -g @icp-sdk/icp-cli@0.2.7 @icp-sdk/ic-wasm
 
             - name: Import deploy identity
               env:
