@@ -227,7 +227,13 @@ See [docs/SCHEMA_UPGRADE_CHECKING.md](docs/SCHEMA_UPGRADE_CHECKING.md) for the f
 
 ## Disclaimer
 
-This software is in alpha and may have unknown security vulnerabilities. It has not undergone an independent security audit. Use at your own risk — see the Basilisk [disclaimer](https://github.com/smart-social-contracts/basilisk#disclaimer) for details.
+**This software is not production-ready.** Do not deploy to mainnet or use with real assets or canister state you cannot afford to lose.
+
+This software is in early development (alpha). It may contain bugs, breaking changes, and unknown security vulnerabilities. It has not undergone an independent security audit. **Use at your own risk** — see the Basilisk [disclaimer](https://github.com/smart-social-contracts/basilisk#disclaimer) for additional context.
+
+- Not recommended for production deployments on the Internet Computer
+- No guarantee of correctness, availability, or security
+- APIs and behavior may change without notice
 
 ## License
 
