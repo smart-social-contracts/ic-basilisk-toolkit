@@ -53,15 +53,27 @@ def _unwrap(raw: str) -> Dict[str, Any]:
     return reply
 
 
-def load(schema: str, policies: str) -> None:
+def load(schema: str, policies: str) -> List[str]:
     """Parse and validate a schema and policy set, holding them for later calls.
 
     Parsing dominates the cost of authorization, so this belongs at startup and
     never on a request path. Raises :class:`CedarError` if the policies do not
     parse or do not typecheck against the schema — which is how an extension
     shipping broken policies is refused at install rather than at decision time.
+
+    Returns warnings about permits far broader than an author probably meant.
+    Typechecking against a restricted schema stops a policy reaching data outside
+    its namespace, but says nothing about how much of its *own* data it hands
+    out, and ``permit (principal, action, resource);`` passes validation while
+    granting every user everything the extension owns. Warnings, not errors:
+    that policy is correct for an extension whose data is meant to be public, so
+    the caller decides whether to surface, log or refuse.
     """
-    _unwrap(_module().load(schema, policies))
+    reply = _unwrap(_module().load(schema, policies))
+    warnings = reply.get("warnings") or []
+    if not isinstance(warnings, list):
+        raise CedarError(f"expected a 'warnings' list, got {reply!r}")
+    return warnings
 
 
 def is_authorized(

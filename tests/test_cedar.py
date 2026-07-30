@@ -88,9 +88,32 @@ class TestDecisions:
         fake({"decision": "deny"})
         assert cedar.is_authorized("p", "a", "r", []) is False
 
-    def test_load_returns_nothing_on_success(self, fake):
+
+class TestBreadthWarnings:
+    """A policy can typecheck and still hand out everything the extension owns."""
+
+    def test_a_clean_load_warns_about_nothing(self, fake):
+        fake({"ok": True, "warnings": []})
+        assert cedar.load("schema", "policies") == []
+
+    def test_an_older_module_without_warnings_still_works(self, fake):
         fake({"ok": True})
-        assert cedar.load("schema", "policies") is None
+        assert cedar.load("schema", "policies") == []
+
+    def test_warnings_reach_the_caller(self, fake):
+        fake({"ok": True, "warnings": ["policy0: blanket permit — grants every"]})
+        assert "blanket permit" in cedar.load("schema", "policies")[0]
+
+    def test_a_warning_does_not_raise(self, fake):
+        # Warn, do not refuse: a blanket permit is correct for an extension whose
+        # data is meant to be public, and nothing here can tell the difference.
+        fake({"ok": True, "warnings": ["policy0: blanket permit"]})
+        cedar.load("schema", "policies")
+
+    def test_a_malformed_warnings_field_is_an_error(self, fake):
+        fake({"ok": True, "warnings": "blanket permit"})
+        with pytest.raises(cedar.CedarError, match="'warnings' list"):
+            cedar.load("schema", "policies")
 
 
 class TestArgumentEncoding:
