@@ -157,9 +157,19 @@ class TestActions:
 
     def test_actions_are_grouped_for_coarse_policies(self, schema):
         text, _ = generate_cedar_schema(schema, "Realm", "User")
-        assert "action read;" in text
-        assert "action write;" in text
+        assert "action read\n" in text
+        assert "action write\n" in text
         assert 'action "entity.get" in [read]' in text
+
+    def test_group_actions_can_themselves_be_requested(self, schema):
+        # An action declared without `appliesTo` applies to nothing, so a
+        # request naming it is refused by the schema and the caller sees a
+        # denial with no policy behind it. A host that maps many operations onto
+        # a coarse read/write needs these to be real, requestable actions.
+        text, _ = generate_cedar_schema(schema, "Realm", "User")
+        read_block = text.split("action read")[1].split(";")[0]
+        assert "appliesTo" in read_block
+        assert "principal: [User]" in read_block
 
     def test_custom_actions_replace_the_defaults(self, schema):
         text, _ = generate_cedar_schema(
@@ -178,6 +188,8 @@ class TestContext:
         text, _ = generate_cedar_schema(
             schema, "Realm", "User", context={"extension": "String"}
         )
+        # The five named actions plus the two groups they belong to, since a
+        # group is requestable in its own right and needs the same context.
         assert text.count("context: { extension?: String }") == len(
             {
                 "entity.get",
@@ -186,7 +198,7 @@ class TestContext:
                 "entity.update",
                 "entity.delete",
             }
-        )
+        ) + len({"read", "write"})
 
     def test_context_attributes_are_optional(self, schema):
         # A host-originated request omits attributes that only apply to

@@ -326,8 +326,17 @@ def generate_cedar_schema(
         context_clause = ""
 
     action_blocks: List[str] = []
+    # Group actions carry the same `appliesTo` as their members, so they can be
+    # requested directly and not only used to group. A host mapping many
+    # operations onto a coarse `read`/`write` needs that: an action declared
+    # without `appliesTo` applies to nothing, so a request naming it is refused
+    # by the schema and the caller sees a denial with no policy behind it.
     for group in sorted(set(actions.values())):
-        action_blocks.append(f"action {group};")
+        action_blocks.append(
+            f"action {group}\n"
+            f"    appliesTo {{ principal: [{principal_type}], "
+            f"resource: [{resource_types}]{context_clause} }};"
+        )
     for action_name in sorted(actions):
         group = actions[action_name]
         action_blocks.append(
