@@ -339,6 +339,10 @@ def generate_cedar_schema(
         )
     for action_name in sorted(actions):
         group = actions[action_name]
+        if action_name == group:
+            # A self-grouped action is already emitted by the group loop above;
+            # re-declaring it here would duplicate the name in the schema.
+            continue
         action_blocks.append(
             f'action "{action_name}" in [{group}]\n'
             f"    appliesTo {{ principal: [{principal_type}], "

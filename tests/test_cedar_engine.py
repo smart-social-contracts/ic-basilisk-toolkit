@@ -225,3 +225,45 @@ class TestRequireEnforcement:
         fake({"ok": True, "warnings": []})
         engine.load()
         engine.require_enforcement()
+
+
+class TestPerCallContext:
+    def test_per_call_context_merges_over_provider(self, engine, fake, monkeypatch):
+        monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
+        module = fake({"ok": True, "warnings": []})
+        engine.load()
+        module.reply = {"decision": "allow"}
+
+        assert engine.is_authorized("alice", "read", context={"repl": True})
+        _, args = module.calls[-1]
+        assert json.loads(args[4]) == {"source": "test", "repl": True}
+
+    def test_per_call_context_overrides_provider_keys(self, engine, fake, monkeypatch):
+        monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
+        module = fake({"ok": True, "warnings": []})
+        engine.load()
+        module.reply = {"decision": "allow"}
+
+        engine.is_authorized("alice", "read", context={"source": "repl"})
+        _, args = module.calls[-1]
+        assert json.loads(args[4]) == {"source": "repl"}
+
+    def test_no_per_call_context_keeps_provider(self, engine, fake, monkeypatch):
+        monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
+        module = fake({"ok": True, "warnings": []})
+        engine.load()
+        module.reply = {"decision": "allow"}
+
+        engine.is_authorized("alice", "read")
+        _, args = module.calls[-1]
+        assert json.loads(args[4]) == {"source": "test"}
+
+    def test_check_passes_context_through(self, engine, fake, monkeypatch):
+        monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
+        module = fake({"ok": True, "warnings": []})
+        engine.load()
+        module.reply = {"decision": "allow"}
+
+        engine.check("alice", "read", context={"repl": True})
+        _, args = module.calls[-1]
+        assert json.loads(args[4]) == {"source": "test", "repl": True}

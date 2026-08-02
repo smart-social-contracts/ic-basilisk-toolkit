@@ -152,6 +152,7 @@ class CedarEngine:
         resource_id: str = "",
         resource_row=None,
         entities: Optional[List[dict]] = None,
+        context: Optional[dict] = None,
     ) -> bool:
         """Decide one call. Denies on any failure."""
         if not self.enabled():
@@ -168,7 +169,12 @@ class CedarEngine:
             else f'{self.namespace}::{self.namespace}::"{self.namespace.lower()}"'
         )
 
-        context = self.context_provider() if self.context_provider else None
+        if context is None:
+            merged = self.context_provider() if self.context_provider else None
+        else:
+            # Per-call facts (e.g. a REPL marker) layer over the ambient origin.
+            base = self.context_provider() if self.context_provider else None
+            merged = {**(base or {}), **context}
 
         try:
             return _cedar.is_authorized(
@@ -176,7 +182,7 @@ class CedarEngine:
                 f'{self.namespace}::Action::"{action}"',
                 resource,
                 entities,
-                context,
+                merged,
             )
         except CedarError as exc:
             _log(f"cedar_engine: decision failed for {action}: {exc}")
@@ -190,6 +196,7 @@ class CedarEngine:
         resource_id: str = "",
         resource_row=None,
         entities: Optional[List[dict]] = None,
+        context: Optional[dict] = None,
     ) -> None:
         """Raise ``PermissionError`` unless the call is authorized."""
         if not self.enabled():
@@ -203,6 +210,7 @@ class CedarEngine:
             resource_id,
             resource_row,
             entities=entities,
+            context=context,
         ):
             raise PermissionError(f"'{action}' denied by policy")
 

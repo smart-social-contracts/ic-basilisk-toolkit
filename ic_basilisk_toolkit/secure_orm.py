@@ -391,8 +391,19 @@ def setup_secure_orm(
     principal_entity: Optional[Type[Entity]] = None,
     extra_policies: str = "",
     budget: int = 50_000_000,
+    memberships: Optional[Dict[str, List[str]]] = None,
+    actions: Optional[Dict[str, str]] = None,
+    context: Optional[Dict[str, str]] = None,
+    shell_context: Optional[Dict[str, Any]] = None,
 ) -> "SecureORM":
-    """Wire Cedar, policies, and RPC dispatch for *entities*."""
+    """Wire Cedar, policies, and RPC dispatch for *entities*.
+
+    ``memberships``/``actions``/``context`` pass through to
+    ``generate_cedar_schema`` so hosts can keep their own action vocabulary
+    and request-context shape. ``shell_context`` is merged into every
+    REPL-originated authorization request (e.g. ``{"repl": True}``), letting
+    policies distinguish sandboxed-REPL calls from ordinary host calls.
+    """
     if CedarEngine is None or Slicer is None:
         raise ImportError(
             "cedar_engine and cedar_slicing are required for setup_secure_orm"
@@ -407,6 +418,9 @@ def setup_secure_orm(
         schema_dict,
         namespace=namespace,
         principal_type=principal_type,
+        memberships=memberships,
+        actions=actions,
+        context=context,
     )
     policies = generate_default_policies(
         schema_dict, namespace, entities, principal_type
@@ -428,6 +442,7 @@ def setup_secure_orm(
         schema=schema_dict,
         principal_type=principal_type,
         budget=budget,
+        shell_context=shell_context,
     )
 
 
@@ -442,6 +457,7 @@ class SecureORM:
         schema: Dict[str, Any],
         principal_type: str = "User",
         budget: int = 50_000_000,
+        shell_context: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.engine = engine
         self.namespace = namespace
@@ -449,6 +465,7 @@ class SecureORM:
         self._schema = schema
         self._principal_type = principal_type
         self._budget = budget
+        self._shell_context = shell_context
         self._stub_source = _generate_stub_source(self._entities, self._schema)
         self._sandbox_hash = ""
         self._sandboxes: Dict[str, Any] = {}
@@ -582,7 +599,10 @@ class SecureORM:
     def _create(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> dict:
         kwargs = dict(kwargs or {})
         kwargs.pop("id", None)
-        self.engine.check(principal_id, "entity.create", cls.__name__, "new")
+        self.engine.check(
+            principal_id, "entity.create", cls.__name__, "new",
+            context=self._shell_context,
+        )
 
         owner_field = getattr(cls, "__owner_field__", "owner")
         fields = self._schema.get(cls.__name__, {}).get("fields", {})
@@ -606,6 +626,7 @@ class SecureORM:
                     parent_cls.__name__,
                     parent_row._id,
                     parent_row,
+                    context=self._shell_context,
                 )
         scalar_kwargs = {
             k: v
@@ -655,7 +676,8 @@ class SecureORM:
             row
             for row in filtered
             if self.engine.is_authorized(
-                principal_id, "entity.list", cls.__name__, row._id, row
+                principal_id, "entity.list", cls.__name__, row._id, row,
+                context=self._shell_context,
             )
         ]
 
@@ -683,7 +705,8 @@ class SecureORM:
         if row is None:
             return None
         self.engine.check(
-            principal_id, "entity.get", cls.__name__, row_id, row
+            principal_id, "entity.get", cls.__name__, row_id, row,
+            context=self._shell_context,
         )
         return self._row_dict(cls, row)
 
@@ -692,7 +715,8 @@ class SecureORM:
         row_id = str(kwargs.pop("id", ""))
         row = self._load_row(cls, row_id)
         self.engine.check(
-            principal_id, "entity.update", cls.__name__, row_id, row
+            principal_id, "entity.update", cls.__name__, row_id, row,
+            context=self._shell_context,
         )
 
         owner_field = getattr(cls, "__owner_field__", "owner")
@@ -713,7 +737,8 @@ class SecureORM:
         row_id = str(kwargs.get("id", ""))
         row = self._load_row(cls, row_id)
         self.engine.check(
-            principal_id, "entity.delete", cls.__name__, row_id, row
+            principal_id, "entity.delete", cls.__name__, row_id, row,
+            context=self._shell_context,
         )
         # Cascade to OneToMany children: they are owned through this row, so the
         # check above already covers them.

@@ -186,7 +186,7 @@ class TestHandleRpc:
 
         allowed_ids = {first["id"]}
 
-        def fake_is_authorized(principal_id, action, resource_type="", resource_id="", resource_row=None, entities=None):
+        def fake_is_authorized(principal_id, action, resource_type="", resource_id="", resource_row=None, entities=None, context=None):
             return resource_id in allowed_ids and principal_id == "alice"
 
         monkeypatch.setattr(orm.engine, "is_authorized", fake_is_authorized)
@@ -239,7 +239,7 @@ class TestHandleRpc:
         assert orm.handle_rpc("alice", "todo_list.count", {}) == 2
         assert orm.handle_rpc("alice", "todo_list.count", {"title": "A"}) == 1
 
-        def fake_is_authorized(principal_id, action, resource_type="", resource_id="", resource_row=None, entities=None):
+        def fake_is_authorized(principal_id, action, resource_type="", resource_id="", resource_row=None, entities=None, context=None):
             return resource_id == first["id"]
 
         monkeypatch.setattr(orm.engine, "is_authorized", fake_is_authorized)
@@ -490,3 +490,45 @@ class TestModuleImport:
 
         assert mod.SecureEntity is not None
         assert mod.RpcError is not None
+
+
+class TestSetupSchemaPassThrough:
+    def test_actions_and_context_passed_to_schema(self, fake_cedar):
+        orm = setup_secure_orm(
+            [TodoList, TodoItem],
+            "TodoApp",
+            principal_entity=User,
+            actions={"read": "read", "write": "write", "entity.create": "write",
+                     "entity.get": "read", "entity.list": "read",
+                     "entity.update": "write", "entity.delete": "write"},
+            context={"extension": "String", "repl": "Bool"},
+        )
+        schema = orm.engine.schema
+        assert "action read\n" in schema
+        assert 'action "entity.create" in [write]' in schema
+        assert "extension?: String" in schema
+        assert "repl?: Bool" in schema
+        # Self-grouped actions are declared once, not duplicated.
+        assert schema.count("action read") == 1
+
+    def test_memberships_passed_to_schema(self, fake_cedar):
+        orm = setup_secure_orm(
+            [TodoList, TodoItem],
+            "TodoApp",
+            principal_entity=User,
+            memberships={"TodoItem": ["todo_list"]},
+        )
+        assert "entity TodoItem in [TodoList]" in orm.engine.schema
+
+    def test_shell_context_stored(self, fake_cedar):
+        orm = setup_secure_orm(
+            [TodoList, TodoItem],
+            "TodoApp",
+            principal_entity=User,
+            shell_context={"repl": True},
+        )
+        assert orm._shell_context == {"repl": True}
+
+    def test_shell_context_default_none(self, fake_cedar):
+        orm = setup_secure_orm([TodoList, TodoItem], "TodoApp", principal_entity=User)
+        assert orm._shell_context is None
