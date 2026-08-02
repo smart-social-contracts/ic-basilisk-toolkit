@@ -1,0 +1,6 @@
+canisters:
+  - name: "todo_list"
+    recipe:
+      type: https://github.com/smart-social-contracts/basilisk/releases/latest/download/recipe.hbs
+      configuration:
+        entry: src/main.py

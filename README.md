@@ -105,6 +105,46 @@ bob.friends
 ```
 </td></tr>
 <tr>
+  <td><strong>Secure ORM</strong></td>
+  <td>Sandboxed, Cedar-authorized entity access — plug-and-play</td>
+</tr>
+<tr><td colspan="2">
+
+```python
+class TodoList(SecureEntity):
+    title = String(max_length=200)
+    owner = String(max_length=64)
+
+orm = setup_secure_orm([TodoList], namespace="TodoApp")
+
+@update
+def __shell__(code: str) -> text:
+    return orm.shell(code)   # sandboxed REPL; Cedar checks every mutation
+```
+
+Users REPL with ORM-style stubs (`TodoList.create(...)`, `lst.title = "x"` auto-saves);
+every change crosses a host RPC gated by Cedar owner policies. See the
+[todo_list template](templates/todo_list).
+
+</td></tr>
+<tr>
+  <td><strong>Cedar Authorization</strong></td>
+  <td>Policy engine wrapper, schema generation, fail-closed decision point</td>
+</tr>
+<tr><td colspan="2">
+
+```python
+from ic_basilisk_toolkit.cedar_engine import CedarEngine
+
+engine = CedarEngine("TodoApp", "User", schema, policies)
+engine.load()                      # fail-closed; parses + validates at startup
+engine.check(caller, "entity.update", "TodoList", row_id, row)
+```
+
+Requires the Cedar canister template artifact (`_basilisk_cedar`).
+
+</td></tr>
+<tr>
   <td><strong>Schema Upgrades</strong></td>
   <td>Pre-deploy schema diff, migration safety, read-only data browsing</td>
 </tr>
@@ -188,6 +228,7 @@ Full-stack example canisters, each deployable as-is:
 
 - [**Tip Jar**](templates/tip_jar) — crypto donations in ckBTC / ckETH / ckUSDC / ICP with live exchange rates, encrypted messages, donor leaderboard. [Live](https://ox2q2-saaaa-aaaau-agj7a-cai.icp0.io/).
 - [**File Registry**](templates/file_registry) — general-purpose on-chain file storage with HTTP serving, CORS, chunked upload for large WASMs, and per-namespace ACLs. [Live](https://oe3kv-3aaaa-aaaac-qgmzq-cai.icp0.io/).
+- [**Todo List**](templates/todo_list) — multi-user todo lists with sandboxed REPL and Cedar owner-only authorization, built on `SecureEntity`. Backend-only; the smallest secure-ORM example.
 
 ## Website
 

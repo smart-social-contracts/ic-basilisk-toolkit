@@ -1,0 +1,7 @@
+.icp/
+.basilisk/
+.dfx/
+__pycache__/
+*.pyc
+*.did
+venv/

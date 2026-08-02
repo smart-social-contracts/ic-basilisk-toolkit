@@ -15,7 +15,7 @@ Canister-side code: entities and task_manager run *inside* the canister.
 Client-side code: shell, sshd, sftp run on the developer machine.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     # Status enums
