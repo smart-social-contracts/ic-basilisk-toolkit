@@ -192,9 +192,18 @@ class Slicer:
         }
 
     def principal_entity(
-        self, principal_id: str, parents: list | None = None
+        self,
+        principal_id: str,
+        parents: list | None = None,
+        row=None,
     ) -> List[Dict[str, Any]]:
-        """The calling principal and optional parent-group entities."""
+        """The calling principal and optional parent-group entities.
+
+        ``row`` is the principal's own ORM row when the host has one: its
+        declared attributes are projected so policies can read them, and its
+        ``id`` is then forced to the caller's principal — never the ORM's
+        internal id.
+        """
         parent_uids: List[Dict[str, str]] = list(parents or ())
         entities: List[Dict[str, Any]] = []
 
@@ -208,7 +217,12 @@ class Slicer:
             entities.append(self._entity(parent_type, parent["id"], {}))
 
         declared = self.declared_attrs(self.principal_type)
-        attrs: Dict[str, Any] = {"id": principal_id}
+        attrs: Dict[str, Any] = (
+            self._attrs(row, declared)
+            if row is not None and declared is not None
+            else {}
+        )
+        attrs["id"] = principal_id
         entities.append(
             self._entity(self.principal_type, principal_id, attrs, parent_uids)
         )
@@ -258,9 +272,10 @@ class Slicer:
         resource_id: str = "",
         resource_row=None,
         principal_parents: list | None = None,
+        principal_row=None,
     ) -> List[Dict[str, Any]]:
         """The complete entity store for one decision."""
-        entities = self.principal_entity(principal_id, principal_parents)
+        entities = self.principal_entity(principal_id, principal_parents, principal_row)
         entities.extend(
             self.resource_entity(resource_type, resource_id, resource_row)
         )

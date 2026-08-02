@@ -441,6 +441,7 @@ def setup_secure_orm(
         entities=list(entities),
         schema=schema_dict,
         principal_type=principal_type,
+        principal_entity=principal_entity,
         budget=budget,
         shell_context=shell_context,
     )
@@ -456,6 +457,7 @@ class SecureORM:
         entities: List[Type[SecureEntity]],
         schema: Dict[str, Any],
         principal_type: str = "User",
+        principal_entity: Optional[Type[Entity]] = None,
         budget: int = 50_000_000,
         shell_context: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -464,6 +466,7 @@ class SecureORM:
         self._entities = list(entities)
         self._schema = schema
         self._principal_type = principal_type
+        self._principal_entity = principal_entity
         self._budget = budget
         self._shell_context = shell_context
         self._stub_source = _generate_stub_source(self._entities, self._schema)
@@ -606,12 +609,38 @@ class SecureORM:
 
         owner_field = getattr(cls, "__owner_field__", "owner")
         fields = self._schema.get(cls.__name__, {}).get("fields", {})
+        relationships = self._schema.get(cls.__name__, {}).get("relationships", {})
+        force_owner_relation = False
+        if self._principal_entity is not None and owner_field not in fields:
+            owner_rel = relationships.get(owner_field)
+            if (
+                owner_rel is not None
+                and owner_rel.get("type") == "ManyToOne"
+                and _relation_targets(owner_rel) == [self.engine.principal_type]
+            ):
+                force_owner_relation = True
+                kwargs.pop(f"{owner_field}_id", None)
+                kwargs.pop(owner_field, None)
+
         if owner_field in fields:
             kwargs[owner_field] = principal_id
         else:
             kwargs.pop(owner_field, None)
 
         relation_kwargs = self._resolve_relations(cls, kwargs)
+
+        if force_owner_relation:
+            principal_cls = self._principal_entity
+            if hasattr(principal_cls, "load"):
+                principal_row = principal_cls.load(principal_id)
+            else:
+                principal_row = principal_cls[principal_id]
+            if principal_row is None:
+                raise RpcError(
+                    f"{self.engine.principal_type} {principal_id} not found"
+                )
+            relation_kwargs[owner_field] = principal_row
+
         # Creating a child row mutates the parent's content, so every resolved
         # ManyToOne parent with an owner field must pass an update check —
         # otherwise anyone could attach rows to another user's entities.

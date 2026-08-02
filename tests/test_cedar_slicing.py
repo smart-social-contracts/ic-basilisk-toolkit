@@ -188,3 +188,49 @@ class TestSliceFor:
         types = {e["uid"]["type"] for e in entities}
         assert "TodoApp::User" in types
         assert "TodoApp::TodoItem" in types
+
+
+class TestPrincipalRowProjection:
+    def test_principal_row_attrs_projected_and_id_forced(self):
+        from ic_basilisk_toolkit.cedar_slicing import Slicer
+
+        schema = """
+namespace TodoApp {
+    entity User {
+        id?: String,
+        nickname?: String,
+    };
+    action read appliesTo { principal: [User], resource: [User] };
+}
+"""
+
+        class Row:
+            id = "internal-db-id"
+            nickname = "Al"
+            password = "hunter2"
+
+        entities = Slicer("TodoApp", schema).principal_entity("alice", row=Row())
+        user = entities[-1]
+        assert user["uid"] == {"type": "TodoApp::User", "id": "alice"}
+        assert user["attrs"]["nickname"] == "Al"
+        assert user["attrs"]["id"] == "alice"
+        assert "password" not in user["attrs"]
+
+    def test_slice_for_passes_principal_row(self):
+        from ic_basilisk_toolkit.cedar_slicing import Slicer
+
+        schema = """
+namespace TodoApp {
+    entity User {
+        id?: String,
+        nickname?: String,
+    };
+    action read appliesTo { principal: [User], resource: [User] };
+"""
+
+        class Row:
+            nickname = "Al"
+
+        entities = Slicer("TodoApp", schema).slice_for("alice", principal_row=Row())
+        user = [e for e in entities if e["uid"]["type"] == "TodoApp::User"][0]
+        assert user["attrs"]["nickname"] == "Al"

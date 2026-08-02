@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="ic-basilisk-toolkit",
-    version="0.5.1",
+    version="0.5.2",
     author="Smart Social Contracts",
     author_email="contact@smartsocialcontracts.org",
     description="Basilisk Toolkit — Services, shell, and SFTP for IC Python canisters",

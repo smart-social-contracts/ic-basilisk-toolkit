@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from ic_basilisk_toolkit import cedar
 from ic_basilisk_toolkit.secure_orm import (
+    RpcError,
     SecureEntity,
     generate_default_policies,
     setup_secure_orm,
@@ -40,6 +41,16 @@ class TodoItem(SecureEntity):
     title = String(max_length=500)
     done = Boolean(default=False)
     todo_list = ManyToOne("TodoList", "items")
+
+
+class Post(SecureEntity):
+    __owner_field__ = "user"
+
+    title = String(max_length=200)
+    user = ManyToOne("User", "posts")
+
+
+User.posts = OneToMany("Post", "user")
 
 
 class FakeModule:
@@ -532,3 +543,45 @@ class TestSetupSchemaPassThrough:
     def test_shell_context_default_none(self, fake_cedar):
         orm = setup_secure_orm([TodoList, TodoItem], "TodoApp", principal_entity=User)
         assert orm._shell_context is None
+
+
+class TestRelationOwnerOnCreate:
+    def _make_post_orm(self, fake_cedar):
+        alice = User(id="alice")
+        bob = User(id="bob")
+        orm = setup_secure_orm(
+            [Post],
+            "TodoApp",
+            principal_type="User",
+            principal_entity=User,
+        )
+        return orm, alice, bob
+
+    def test_create_forces_owner_relation_to_principal(self, fake_cedar):
+        orm, alice, bob = self._make_post_orm(fake_cedar)
+        row = orm.handle_rpc(
+            alice._id,
+            "post.create",
+            {"title": "Hello", "user_id": bob._id},
+        )
+        assert row["user_id"] == alice._id
+        loaded = Post.load(row["id"])
+        assert loaded.user._id == alice._id
+
+    def test_create_raises_when_principal_missing(self, fake_cedar):
+        orm, _, _ = self._make_post_orm(fake_cedar)
+        with pytest.raises(RpcError, match="User eve not found"):
+            orm.handle_rpc("eve", "post.create", {"title": "Ghost"})
+
+    def test_create_without_principal_entity_unchanged(self, fake_cedar):
+        alice = User(id="alice")
+        bob = User(id="bob")
+        orm = setup_secure_orm([User, Post], "TodoApp", principal_type="User")
+        row = orm.handle_rpc(
+            alice._id,
+            "post.create",
+            {"title": "Hello", "user_id": bob._id},
+        )
+        assert row["user_id"] == bob._id
+        loaded = Post.load(row["id"])
+        assert loaded.user._id == bob._id
