@@ -28,7 +28,7 @@ Database.init(db_storage=MemoryStorage(), audit_enabled=False)
 
 
 class User(SecureEntity):
-    id = String(max_length=64)
+    id = String(max_length=64, indexed=True)
 
 
 class TodoList(SecureEntity):
@@ -120,6 +120,15 @@ class TestPolicyGeneration:
         assert "resource is TodoApp::TodoList" in policies
         assert "resource has owner && principal has id && resource.owner == principal.id" in policies
 
+    def test_owner_field_entity_gets_type_level_list_permit(self):
+        schema = _build_schema_dict()
+        policies = generate_default_policies(schema, "TodoApp", [TodoList, TodoItem])
+        assert (
+            'permit (principal, action == TodoApp::Action::"entity.list", '
+            'resource == TodoApp::TodoList::"_");'
+        ) in policies
+        assert "Type-level list permit" in policies
+
     def test_child_entity_gets_owner_via_parent_permit(self):
         schema = _build_schema_dict()
         policies = generate_default_policies(schema, "TodoApp", [TodoList, TodoItem])
@@ -128,6 +137,25 @@ class TestPolicyGeneration:
             "resource has todo_list && resource.todo_list has owner "
             "&& principal has id && resource.todo_list.owner == principal.id"
         ) in policies
+
+    def test_child_entity_gets_type_level_list_permit(self):
+        schema = _build_schema_dict()
+        policies = generate_default_policies(schema, "TodoApp", [TodoList, TodoItem])
+        assert (
+            'permit (principal, action == TodoApp::Action::"entity.list", '
+            'resource == TodoApp::TodoItem::"_");'
+        ) in policies
+
+    def test_type_level_list_permit_only_for_entity_list(self):
+        schema = _build_schema_dict()
+        policies = generate_default_policies(schema, "TodoApp", [TodoList, TodoItem])
+        assert policies.count('action == TodoApp::Action::"entity.list"') == 2
+        assert 'resource == TodoApp::TodoList::"_"' in policies
+        assert 'resource == TodoApp::TodoItem::"_"' in policies
+        assert 'resource is TodoApp::TodoList);' not in policies
+        assert 'action == TodoApp::Action::"entity.get"' not in policies
+        assert 'action == TodoApp::Action::"entity.update"' not in policies
+        assert 'action == TodoApp::Action::"entity.delete"' not in policies
 
     def test_global_create_permit_present(self):
         schema = _build_schema_dict()
@@ -138,10 +166,14 @@ class TestPolicyGeneration:
 class TestActions:
     def test_rpc_action_naming(self, fake_cedar):
         orm = _make_orm(fake_cedar)
-        assert "todo_list.create" in orm.actions()
-        assert "todo_list.list" in orm.actions()
-        assert "todo_list.count" in orm.actions()
-        assert "todo_item.update" in orm.actions()
+        assert orm.actions() == [
+            "orm.create",
+            "orm.list",
+            "orm.get",
+            "orm.update",
+            "orm.delete",
+            "orm.count",
+        ]
 
 
 class TestHandleRpc:
@@ -198,6 +230,9 @@ class TestHandleRpc:
         allowed_ids = {first["id"]}
 
         def fake_is_authorized(principal_id, action, resource_type="", resource_id="", resource_row=None, entities=None, context=None):
+            # Upfront type-level list check uses empty id / typed placeholder.
+            if action == "entity.list" and resource_id in ("", "_"):
+                return True
             return resource_id in allowed_ids and principal_id == "alice"
 
         monkeypatch.setattr(orm.engine, "is_authorized", fake_is_authorized)
@@ -275,9 +310,9 @@ class TestStubSource:
         assert "class TodoList(_Stub)" in src
         assert "class TodoItem(_Stub)" in src
         assert "def eval_repl(code):" in src
-        assert 'rpc(self._prefix + ".update"' in src
+        assert 'rpc("orm.update", _entity=type(self).__name__' in src
         assert "def items(self):" in src
-        assert 'rpc("todo_item.list", todo_list_id=self.id)' in src
+        assert 'rpc("orm.list", _entity="TodoItem", todo_list_id=self.id)' in src
 
     def test_stub_source_has_native_api(self, fake_cedar):
         orm = _make_orm(fake_cedar)
@@ -300,15 +335,16 @@ class TestStubBehavior:
 
         def rpc(action, **kwargs):
             calls.append((action, kwargs))
-            if action == "todo_list.list":
+            entity = kwargs.get("_entity", "")
+            if action == "orm.list" and entity == "TodoList":
                 return [{"id": "1", "title": "T", "owner": "alice"}]
-            if action == "todo_list.count":
+            if action == "orm.count" and entity == "TodoList":
                 return 1
-            if action == "todo_list.create":
+            if action == "orm.create" and entity == "TodoList":
                 return {"id": "2", "title": kwargs.get("title", ""), "owner": "alice"}
-            if action == "todo_list.update":
+            if action == "orm.update" and entity == "TodoList":
                 return {"id": kwargs["id"], "title": kwargs.get("title", "T"), "owner": "alice"}
-            if action == "todo_list.get":
+            if action == "orm.get" and entity == "TodoList":
                 if kwargs["id"] == "999":
                     return None
                 return {"id": kwargs["id"], "title": "T", "owner": "alice"}
@@ -323,7 +359,7 @@ class TestStubBehavior:
         ns, calls = self._exec_stub(orm, [])
         lst = ns["TodoList"]._wrap({"id": "1", "title": "A", "owner": "alice"})
         lst.title = "x"
-        assert ("todo_list.update", {"id": "1", "title": "x"}) in calls
+        assert ("orm.update", {"_entity": "TodoList", "id": "1", "title": "x"}) in calls
 
     def test_wrap_does_not_rpc(self, fake_cedar):
         orm = _make_orm(fake_cedar)
@@ -337,7 +373,7 @@ class TestStubBehavior:
         ns, calls = self._exec_stub(orm, [])
         lst = ns["TodoList"]._wrap({"id": "1", "title": "A", "owner": "alice"})
         lst._x = 1
-        assert not any(c[0] == "todo_list.update" for c in calls)
+        assert not any(c[0] == "orm.update" for c in calls)
 
     def test_create_and_mine_wrap_dicts(self, fake_cedar):
         orm = _make_orm(fake_cedar)
@@ -355,19 +391,19 @@ class TestStubBehavior:
         rows = ns["TodoList"].instances()
         assert len(rows) == 1
         assert rows[0].title == "T"
-        assert ("todo_list.list", {}) in calls
+        assert ("orm.list", {"_entity": "TodoList"}) in calls
 
     def test_count_returns_int(self, fake_cedar):
         orm = _make_orm(fake_cedar)
         ns, calls = self._exec_stub(orm, [])
         assert ns["TodoList"].count() == 1
-        assert ("todo_list.count", {}) in calls
+        assert ("orm.count", {"_entity": "TodoList"}) in calls
 
     def test_find_passes_filter_dict(self, fake_cedar):
         orm = _make_orm(fake_cedar)
         ns, calls = self._exec_stub(orm, [])
         rows = ns["TodoList"].find({"title": "T"})
-        assert ("todo_list.list", {"title": "T"}) in calls
+        assert ("orm.list", {"_entity": "TodoList", "title": "T"}) in calls
         assert len(rows) == 1
 
     def test_find_translates_stub_relations(self, fake_cedar):
@@ -375,13 +411,13 @@ class TestStubBehavior:
         ns, calls = self._exec_stub(orm, [])
         lst = ns["TodoList"]._wrap({"id": "7", "title": "A", "owner": "alice"})
         ns["TodoItem"].find({"todo_list": lst})
-        assert ("todo_item.list", {"todo_list_id": "7"}) in calls
+        assert ("orm.list", {"_entity": "TodoItem", "todo_list_id": "7"}) in calls
 
     def test_load_some_passes_pagination(self, fake_cedar):
         orm = _make_orm(fake_cedar)
         ns, calls = self._exec_stub(orm, [])
         ns["TodoList"].load_some(from_id=5, count=10)
-        assert ("todo_list.list", {"from_id": 5, "count": 10}) in calls
+        assert ("orm.list", {"_entity": "TodoList", "from_id": 5, "count": 10}) in calls
 
     def test_load_missing_returns_none(self, fake_cedar):
         orm = _make_orm(fake_cedar)
@@ -395,7 +431,7 @@ class TestStubBehavior:
         lst = ns["TodoList"](title="New")
         assert lst.title == "New"
         assert lst.id == "2"
-        assert ("todo_list.create", {"title": "New"}) in calls
+        assert ("orm.create", {"_entity": "TodoList", "title": "New"}) in calls
 
     def test_class_getitem_loads(self, fake_cedar):
         orm = _make_orm(fake_cedar)
@@ -403,27 +439,32 @@ class TestStubBehavior:
         lst = ns["TodoList"]["1"]
         assert lst.id == "1"
         assert lst.title == "T"
-        assert ("todo_list.get", {"id": "1"}) in calls
+        assert ("orm.get", {"_entity": "TodoList", "id": "1"}) in calls
 
     def test_class_getitem_missing_returns_none(self, fake_cedar):
         orm = _make_orm(fake_cedar)
         ns, _ = self._exec_stub(orm, [])
         assert ns["TodoList"]["999"] is None
 
-    def test_repl_namespace_persists(self, fake_cedar):
+    def test_repl_namespace_isolated(self, fake_cedar):
         orm = _make_orm(fake_cedar)
         ns, _ = self._exec_stub(orm, [])
         eval_repl = ns["eval_repl"]
         eval_repl("a = 5")
-        out = eval_repl("print(a)")
-        assert "5" in out
+        out = eval_repl(
+            "try:\n"
+            "    a\n"
+            "except NameError as e:\n"
+            "    print(repr(e))"
+        )
+        assert "NameError" in out
 
     def test_repl_last_expression_displayed(self, fake_cedar):
         orm = _make_orm(fake_cedar)
         ns, calls = self._exec_stub(orm, [])
         out = ns["eval_repl"]("TodoList.create(title='New')")
         assert "TodoList(" in out
-        assert ("todo_list.create", {"title": "New"}) in calls
+        assert ("orm.create", {"_entity": "TodoList", "title": "New"}) in calls
 
     def test_repl_assignment_no_extra_display(self, fake_cedar):
         orm = _make_orm(fake_cedar)
@@ -585,3 +626,37 @@ class TestRelationOwnerOnCreate:
         assert row["user_id"] == bob._id
         loaded = Post.load(row["id"])
         assert loaded.user._id == bob._id
+
+
+class TestBasiliskSandboxFallback:
+    """_ensure_basilisk_sandbox registers the vendored host module only when
+    the real basilisk.sandbox is missing."""
+
+    def test_registers_vendored_module_when_missing(self, monkeypatch):
+        import types
+
+        from ic_basilisk_toolkit import basilisk_sandbox_host
+        from ic_basilisk_toolkit.secure_orm import _ensure_basilisk_sandbox
+
+        fake_basilisk = types.ModuleType("basilisk")
+        fake_basilisk.__path__ = []
+        monkeypatch.setitem(sys.modules, "basilisk", fake_basilisk)
+        # sys.modules entry of None forces ImportError on import.
+        monkeypatch.setitem(sys.modules, "basilisk.sandbox", None)
+
+        _ensure_basilisk_sandbox()
+
+        assert sys.modules["basilisk.sandbox"] is basilisk_sandbox_host
+        from basilisk.sandbox import spawn_sandboxed  # noqa: F401
+
+    def test_never_overrides_real_module(self, monkeypatch):
+        import types
+
+        from ic_basilisk_toolkit.secure_orm import _ensure_basilisk_sandbox
+
+        real = types.ModuleType("basilisk.sandbox")
+        monkeypatch.setitem(sys.modules, "basilisk.sandbox", real)
+
+        _ensure_basilisk_sandbox()
+
+        assert sys.modules["basilisk.sandbox"] is real

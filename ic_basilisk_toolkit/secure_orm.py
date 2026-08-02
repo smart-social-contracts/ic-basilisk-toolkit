@@ -24,6 +24,40 @@ except ImportError:  # pragma: no cover
     Slicer = None  # type: ignore[misc, assignment]
 
 _CRUD = ("create", "list", "get", "update", "delete", "count")
+_ORM_RPC_PREFIX = "orm"
+
+
+def _orm_rpc(op: str) -> str:
+    return f"{_ORM_RPC_PREFIX}.{op}"
+
+
+def _ensure_basilisk_sandbox() -> None:
+    """Make ``basilisk.sandbox`` importable when the build omits it.
+
+    Some Basilisk canister builds do not bundle ``basilisk/sandbox.py`` (it
+    lives in ``compiler/custom_modules``). Fall back to the vendored
+    host-side copy so ``SecureORM.shell()`` works out of the box. A real
+    ``basilisk.sandbox`` is never overridden.
+    """
+    import sys
+    import types
+
+    try:
+        import basilisk.sandbox  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+
+    from ic_basilisk_toolkit import basilisk_sandbox_host
+
+    bas = sys.modules.get("basilisk")
+    if bas is None:
+        bas = types.ModuleType("basilisk")
+        sys.modules["basilisk"] = bas
+    if not getattr(bas, "__path__", None):
+        bas.__path__ = []
+    sys.modules["basilisk.sandbox"] = basilisk_sandbox_host
 
 
 def _format_sandbox_error(message: str) -> str:
@@ -118,6 +152,12 @@ def generate_default_policies(
             and fields[owner_field].get("type") == "String"
         ):
             lines.append(
+                f"// Type-level list permit: upfront _list checks use typed placeholder "
+                f'Ns::Type::"_" (no row attrs); row filtering still applies per row.\n'
+                f"permit (principal, action == {namespace}::Action::\"entity.list\", "
+                f'resource == {namespace}::{entity_name}::"_");'
+            )
+            lines.append(
                 f"permit (principal, action, resource is {namespace}::{entity_name})\n"
                 f"when {{ resource has {owner_field} && principal has id "
                 f"&& resource.{owner_field} == principal.id }};"
@@ -144,6 +184,12 @@ def generate_default_policies(
                 and target_fields[target_owner].get("type") == "String"
             ):
                 lines.append(
+                    f"// Type-level list permit: upfront _list checks use typed placeholder "
+                    f'Ns::Type::"_" (no row attrs); row filtering still applies per row.\n'
+                    f"permit (principal, action == {namespace}::Action::\"entity.list\", "
+                    f'resource == {namespace}::{entity_name}::"_");'
+                )
+                lines.append(
                     f"permit (principal, action, resource is {namespace}::{entity_name})\n"
                     f"when {{ resource has {rel_name} && resource.{rel_name} has "
                     f"{target_owner} && principal has id "
@@ -162,6 +208,12 @@ def _generate_stub_source(
 ) -> str:
     """Deterministic sandbox stub module (string templating, no imports)."""
     sorted_entities = sorted(entities, key=lambda c: c.__name__)
+    orm_create = _orm_rpc("create")
+    orm_list = _orm_rpc("list")
+    orm_get = _orm_rpc("get")
+    orm_update = _orm_rpc("update")
+    orm_delete = _orm_rpc("delete")
+    orm_count = _orm_rpc("count")
     class_blocks: List[str] = []
 
     for cls in sorted_entities:
@@ -181,12 +233,12 @@ def _generate_stub_source(
             "",
             "    @classmethod",
             "    def create(cls, **kw):",
-            f'        return cls._wrap(rpc("{prefix}.create", **_Stub._rpc_kwargs(kw)))',
+            f'        return cls._wrap(rpc("{orm_create}", _entity="{name}", **_Stub._rpc_kwargs(kw)))',
             "",
             "    @classmethod",
             "    def instances(cls):",
             "        # Cedar-filtered: only rows the caller may list.",
-            f'        return [cls._wrap(d) for d in rpc("{prefix}.list")]',
+            f'        return [cls._wrap(d) for d in rpc("{orm_list}", _entity="{name}")]',
             "",
             "    @classmethod",
             "    def mine(cls):",
@@ -195,25 +247,29 @@ def _generate_stub_source(
             "    @classmethod",
             "    def count(cls):",
             "        # Caller-scoped row count (int; rows are not transferred).",
-            f'        return rpc("{prefix}.count")',
+            f'        return rpc("{orm_count}", _entity="{name}")',
             "",
             "    @classmethod",
             "    def find(cls, d):",
-            f'        return [cls._wrap(x) for x in rpc("{prefix}.list", **_Stub._rpc_kwargs(d))]',
+            f'        return [cls._wrap(x) for x in rpc("{orm_list}", _entity="{name}", **_Stub._rpc_kwargs(d))]',
             "",
             "    @classmethod",
             "    def load_some(cls, from_id=1, count=50):",
-            f'        rows = rpc("{prefix}.list", from_id=from_id, count=count)',
+            f'        rows = rpc("{orm_list}", _entity="{name}", from_id=from_id, count=count)',
             "        return [cls._wrap(x) for x in rows]",
             "",
             "    @classmethod",
             "    def get(cls, id):",
-            f'        d = rpc("{prefix}.get", id=id)',
+            f'        d = rpc("{orm_get}", _entity="{name}", id=id)',
             "        return cls._wrap(d) if d else None",
             "",
             "    @classmethod",
             "    def load(cls, id):",
             "        return cls.get(id)",
+            "",
+            "    @classmethod",
+            "    def list(cls):",
+            "        return cls.instances()",
         ]
 
         for rel_name in sorted(relationships):
@@ -238,7 +294,7 @@ def _generate_stub_source(
                 [
                     "",
                     f"    def {rel_name}(self):",
-                    f'        rows = rpc("{child_prefix}.list", {filter_kw}=self.id)',
+                    f'        rows = rpc("{orm_list}", _entity="{child_name}", {filter_kw}=self.id)',
                     f"        return [{child_name}._wrap(d) for d in rows]",
                 ]
             )
@@ -273,6 +329,9 @@ class _Stub:
             raise AttributeError(name) from exc
         if name in data:
             return data[name]
+        rel_id = name + "_id"
+        if rel_id in data:
+            return data[rel_id]
         raise AttributeError(name)
 
     def __setattr__(self, name, value):
@@ -280,21 +339,25 @@ class _Stub:
             object.__setattr__(self, name, value)
             return
         data = object.__getattribute__(self, "_data")
-        rpc(self._prefix + ".update", id=data["id"], **_Stub._rpc_kwargs({{name: value}}))
+        rpc("{orm_update}", _entity=type(self).__name__, id=data["id"], **_Stub._rpc_kwargs({{name: value}}))
         data[name] = value
 
     @property
     def id(self):
         return object.__getattribute__(self, "_data")["id"]
 
+    @property
+    def _id(self):
+        return self.id
+
     def update(self, **fields):
         data = object.__getattribute__(self, "_data")
-        rpc(self._prefix + ".update", id=data["id"], **_Stub._rpc_kwargs(fields))
+        rpc("{orm_update}", _entity=type(self).__name__, id=data["id"], **_Stub._rpc_kwargs(fields))
         data.update(fields)
 
     def delete(self):
         data = object.__getattribute__(self, "_data")
-        rpc(self._prefix + ".delete", id=data["id"])
+        rpc("{orm_delete}", _entity=type(self).__name__, id=data["id"])
 
     def __repr__(self):
         data = object.__getattribute__(self, "_data")
@@ -305,12 +368,12 @@ class _Stub:
 def _make_entity_class(name, prefix, base):
     # Constructor: TodoList(title="...") → create RPC (matches ic-python-db).
     def __init__(self, **kw):
-        data = rpc(prefix + ".create", **_Stub._rpc_kwargs(kw))
+        data = rpc("{orm_create}", _entity=name, **_Stub._rpc_kwargs(kw))
         object.__setattr__(self, "_data", dict(data))
 
     # Class subscription: TodoList["1"] → load RPC (matches ic-python-db).
     def __class_getitem__(cls, key):
-        d = rpc(prefix + ".get", id=str(key))
+        d = rpc("{orm_get}", _entity=name, id=str(key))
         return cls._wrap(d) if d else None
 
     attrs = {{
@@ -321,13 +384,13 @@ def _make_entity_class(name, prefix, base):
     for attr in dir(_Stub):
         if attr in attrs:
             continue
-        if attr.startswith("_") and attr not in ("_prefix", "_wrap"):
+        if attr.startswith("_") and attr not in ("_prefix", "_wrap", "_id"):
             continue
         attrs[attr] = getattr(_Stub, attr)
     for attr in dir(base):
         if attr in attrs:
             continue
-        if attr.startswith("_") and attr not in ("_prefix", "_wrap"):
+        if attr.startswith("_") and attr not in ("_prefix", "_wrap", "_id"):
             continue
         attrs[attr] = getattr(base, attr)
     return type(name, (_Stub,), attrs)
@@ -350,13 +413,10 @@ def eval_repl(code):
     old_stderr = sys.stderr
     sys.stdout = buf
     sys.stderr = err
-    # Persistent REPL namespace: variables survive across calls.
-    ns = globals().setdefault("_repl_ns", None)
-    if ns is None:
-        ns = {{"rpc": globals().get("rpc"), "__builtins__": __builtins__}}
-        for _name in ({entity_names},):
-            ns[_name] = globals()[_name]
-        globals()["_repl_ns"] = ns
+    # Fresh namespace per call — REPL variables must not leak across __shell__ invocations.
+    ns = {{"rpc": globals().get("rpc"), "__builtins__": __builtins__}}
+    for _name in ({entity_names},):
+        ns[_name] = globals()[_name]
     result = None
     use_eval = False
     code_stripped = code.strip()
@@ -476,11 +536,9 @@ class SecureORM:
         self._name_map = {cls.__name__: cls for cls in self._entities}
 
     def actions(self) -> List[str]:
-        names: List[str] = []
-        for cls in sorted(self._entities, key=lambda c: c.__name__):
-            prefix = _snake_case(cls.__name__)
-            names.extend(f"{prefix}.{op}" for op in _CRUD)
-        return names
+        # Six generic RPC verbs — the C sandbox gate allows at most 32 actions,
+        # and per-entity prefixes would exceed that for a full ggg schema.
+        return [_orm_rpc(op) for op in _CRUD]
 
     def stub_source(self) -> str:
         return self._stub_source
@@ -613,14 +671,15 @@ class SecureORM:
         force_owner_relation = False
         if self._principal_entity is not None and owner_field not in fields:
             owner_rel = relationships.get(owner_field)
-            if (
-                owner_rel is not None
-                and owner_rel.get("type") == "ManyToOne"
-                and _relation_targets(owner_rel) == [self.engine.principal_type]
+            if owner_rel is not None and owner_rel.get("type") in (
+                "ManyToOne",
+                "OneToOne",
             ):
-                force_owner_relation = True
-                kwargs.pop(f"{owner_field}_id", None)
-                kwargs.pop(owner_field, None)
+                targets = _relation_targets(owner_rel)
+                if targets == [self.engine.principal_type]:
+                    force_owner_relation = True
+                    kwargs.pop(f"{owner_field}_id", None)
+                    kwargs.pop(owner_field, None)
 
         if owner_field in fields:
             kwargs[owner_field] = principal_id
@@ -631,10 +690,16 @@ class SecureORM:
 
         if force_owner_relation:
             principal_cls = self._principal_entity
-            if hasattr(principal_cls, "load"):
-                principal_row = principal_cls.load(principal_id)
-            else:
+            principal_row = None
+            try:
                 principal_row = principal_cls[principal_id]
+            except (KeyError, TypeError, IndexError):
+                principal_row = None
+            if principal_row is None and hasattr(principal_cls, "find_by"):
+                rows, _ = principal_cls.find_by("id", principal_id, count=1)
+                principal_row = rows[0] if rows else None
+            if principal_row is None and hasattr(principal_cls, "load"):
+                principal_row = principal_cls.load(principal_id)
             if principal_row is None:
                 raise RpcError(
                     f"{self.engine.principal_type} {principal_id} not found"
@@ -712,6 +777,16 @@ class SecureORM:
 
     def _list(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> list:
         kwargs = dict(kwargs or {})
+        # Authorize list even when the table is empty — forbidden types must
+        # not appear to succeed with an empty result.
+        self.engine.check(
+            principal_id,
+            "entity.list",
+            cls.__name__,
+            "",
+            None,
+            context=self._shell_context,
+        )
         # Pagination over *visible* rows (applied after Cedar, so page sizes do
         # not leak the existence of hidden rows).
         from_id = int(kwargs.pop("from_id", 1) or 1)
@@ -786,6 +861,29 @@ class SecureORM:
 
     def handle_rpc(self, principal_id: str, action: str, kwargs: dict) -> Any:
         """Dispatch one sandbox RPC action under Cedar enforcement."""
+        kwargs = dict(kwargs or {})
+        if action.startswith(f"{_ORM_RPC_PREFIX}."):
+            op = action[len(_ORM_RPC_PREFIX) + 1 :]
+            entity_name = kwargs.pop("_entity", None)
+            if not entity_name:
+                raise RpcError(f"unknown action {action!r}")
+            cls = self._name_map.get(str(entity_name))
+            if cls is None:
+                raise RpcError(f"unknown entity {entity_name!r}")
+            if op == "create":
+                return self._create(cls, principal_id, kwargs)
+            if op == "list":
+                return self._list(cls, principal_id, kwargs)
+            if op == "count":
+                return self._count(cls, principal_id, kwargs)
+            if op == "get":
+                return self._get(cls, principal_id, kwargs)
+            if op == "update":
+                return self._update(cls, principal_id, kwargs)
+            if op == "delete":
+                return self._delete(cls, principal_id, kwargs)
+            raise RpcError(f"unknown action {action!r}")
+
         if "." not in action:
             raise RpcError(f"unknown action {action!r}")
         prefix, op = action.rsplit(".", 1)
@@ -814,6 +912,7 @@ class SecureORM:
         except ImportError as exc:
             raise RuntimeError("_basilisk_sandbox is not available") from exc
 
+        _ensure_basilisk_sandbox()
         try:
             from basilisk import ic
             from basilisk.sandbox import (

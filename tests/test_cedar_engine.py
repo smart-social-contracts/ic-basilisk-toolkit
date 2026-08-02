@@ -182,6 +182,15 @@ class TestIsAuthorized:
         _, args = module.calls[-1]
         assert args[2] == 'TodoApp::TodoApp::"todoapp"'
 
+    def test_typed_placeholder_when_resource_id_empty(self, engine, fake, monkeypatch):
+        monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
+        module = fake({"ok": True, "warnings": []})
+        engine.load()
+        module.reply = {"decision": "allow"}
+        engine.is_authorized("alice", "entity.list", "UserProfile", "")
+        _, args = module.calls[-1]
+        assert args[2] == 'TodoApp::UserProfile::"_"'
+
     def test_cedar_error_is_fail_closed(self, engine, fake, monkeypatch):
         monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
         fake({"error": "entities: unknown attribute"})

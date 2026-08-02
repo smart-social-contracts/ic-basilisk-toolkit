@@ -163,11 +163,17 @@ class CedarEngine:
                 principal_id, resource_type, resource_id, resource_row
             )
 
-        resource = (
-            self.slicer.uid(resource_type, resource_id)
-            if resource_type and resource_id
-            else f'{self.namespace}::{self.namespace}::"{self.namespace.lower()}"'
-        )
+        # Typed list/create checks pass resource_type with no row id yet.
+        # Cedar policies match on ``resource is Realm::UserProfile`` etc., so
+        # fall back to a typed placeholder rather than the generic realm uid.
+        if resource_type:
+            resource = self.slicer.uid(
+                resource_type, resource_id if resource_id else "_"
+            )
+        else:
+            resource = (
+                f'{self.namespace}::{self.namespace}::"{self.namespace.lower()}"'
+            )
 
         if context is None:
             merged = self.context_provider() if self.context_provider else None

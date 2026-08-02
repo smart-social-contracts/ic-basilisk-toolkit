@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ic-basilisk-toolkit"
-version = "0.5.2"
+version = "0.5.3"
 description = "Basilisk Toolkit — Services, shell, and SFTP for IC Python canisters"
 readme = "README.md"
 authors = [
