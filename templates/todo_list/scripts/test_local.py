@@ -103,7 +103,22 @@ def main() -> int:
     list_id = row["id"]
 
     print("== list owned lists ==")
-    print(unwrap_candid(shell("print(repr([{'id': x.id, 'title': x.title} for x in TodoList.mine()]))")))
+    print(unwrap_candid(shell("print(repr([{'id': x.id, 'title': x.title} for x in TodoList.instances()]))")))
+
+    print("== count + find ==")
+    count_out = unwrap_candid(shell("print(repr({'count': TodoList.count()}))"))
+    print(count_out)
+    if "'count': 0" in count_out:
+        print("FAIL: expected count >= 1")
+        return 1
+    print(unwrap_candid(shell("print(repr([x.title for x in TodoList.find({'title': 'groceries'})]))")))
+
+    print("== load missing returns None ==")
+    missing = unwrap_candid(shell("print(repr(TodoList.load('999')))"))
+    print(missing)
+    if "None" not in missing:
+        print("FAIL: expected None for missing row")
+        return 1
 
     other = icp_other_identity(owner_identity)
     if other is None:

@@ -129,6 +129,7 @@ class TestActions:
         orm = _make_orm(fake_cedar)
         assert "todo_list.create" in orm.actions()
         assert "todo_list.list" in orm.actions()
+        assert "todo_list.count" in orm.actions()
         assert "todo_item.update" in orm.actions()
 
 
@@ -195,6 +196,66 @@ class TestHandleRpc:
         assert rows[0]["id"] == first["id"]
         assert second["id"] not in {r["id"] for r in rows}
 
+    def test_list_scalar_filter(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        orm.handle_rpc("alice", "todo_list.create", {"title": "A"})
+        orm.handle_rpc("alice", "todo_list.create", {"title": "B"})
+        rows = orm.handle_rpc("alice", "todo_list.list", {"title": "A"})
+        assert len(rows) == 1
+        assert rows[0]["title"] == "A"
+
+    def test_list_unknown_filter_matches_nothing(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        orm.handle_rpc("alice", "todo_list.create", {"title": "A"})
+        rows = orm.handle_rpc("alice", "todo_list.list", {"nope": "x"})
+        assert rows == []
+
+    def test_list_pagination(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ids = [
+            orm.handle_rpc("alice", "todo_list.create", {"title": t})["id"]
+            for t in ("A", "B", "C")
+        ]
+        page = orm.handle_rpc("alice", "todo_list.list", {"from_id": 2, "count": 1})
+        assert [r["id"] for r in page] == [ids[1]]
+        rest = orm.handle_rpc("alice", "todo_list.list", {"from_id": 2})
+        assert [r["id"] for r in rest] == ids[1:]
+
+    def test_list_relation_filter_still_works(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        lst = orm.handle_rpc("alice", "todo_list.create", {"title": "L"})
+        orm.handle_rpc("alice", "todo_item.create", {"title": "i1", "todo_list_id": lst["id"]})
+        orm.handle_rpc("alice", "todo_item.create", {"title": "i2", "todo_list_id": lst["id"]})
+        rows = orm.handle_rpc("alice", "todo_item.list", {"todo_list_id": lst["id"]})
+        assert len(rows) == 2
+        rows = orm.handle_rpc("alice", "todo_item.list", {"todo_list_id": "999"})
+        assert rows == []
+
+    def test_count_returns_visible_row_count(self, fake_cedar, monkeypatch):
+        orm = _make_orm(fake_cedar)
+        first = orm.handle_rpc("alice", "todo_list.create", {"title": "A"})
+        orm.handle_rpc("alice", "todo_list.create", {"title": "B"})
+
+        assert orm.handle_rpc("alice", "todo_list.count", {}) == 2
+        assert orm.handle_rpc("alice", "todo_list.count", {"title": "A"}) == 1
+
+        def fake_is_authorized(principal_id, action, resource_type="", resource_id="", resource_row=None, entities=None):
+            return resource_id == first["id"]
+
+        monkeypatch.setattr(orm.engine, "is_authorized", fake_is_authorized)
+        assert orm.handle_rpc("alice", "todo_list.count", {}) == 1
+
+    def test_get_missing_returns_none(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        assert orm.handle_rpc("alice", "todo_list.get", {"id": "999"}) is None
+
+    def test_get_existing_denied_raises(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        created = orm.handle_rpc("alice", "todo_list.create", {"title": "A"})
+        fake_cedar.reply = {"decision": "deny"}
+        with pytest.raises(PermissionError, match="denied"):
+            orm.handle_rpc("bob", "todo_list.get", {"id": created["id"]})
+
 
 class TestStubSource:
     def test_stub_source_contains_expected_parts(self, fake_cedar):
@@ -206,6 +267,16 @@ class TestStubSource:
         assert 'rpc(self._prefix + ".update"' in src
         assert "def items(self):" in src
         assert 'rpc("todo_item.list", todo_list_id=self.id)' in src
+
+    def test_stub_source_has_native_api(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        src = orm.stub_source()
+        assert "def instances(cls):" in src
+        assert "def mine(cls):" in src
+        assert "def count(cls):" in src
+        assert "def find(cls, d):" in src
+        assert "def load_some(cls, from_id=1, count=50):" in src
+        assert "def load(cls, id):" in src
 
     def test_stub_source_is_deterministic(self, fake_cedar):
         orm = _make_orm(fake_cedar)
@@ -220,11 +291,15 @@ class TestStubBehavior:
             calls.append((action, kwargs))
             if action == "todo_list.list":
                 return [{"id": "1", "title": "T", "owner": "alice"}]
+            if action == "todo_list.count":
+                return 1
             if action == "todo_list.create":
                 return {"id": "2", "title": kwargs.get("title", ""), "owner": "alice"}
             if action == "todo_list.update":
                 return {"id": kwargs["id"], "title": kwargs.get("title", "T"), "owner": "alice"}
             if action == "todo_list.get":
+                if kwargs["id"] == "999":
+                    return None
                 return {"id": kwargs["id"], "title": "T", "owner": "alice"}
             return {}
 
@@ -262,6 +337,46 @@ class TestStubBehavior:
         mine = ns["TodoList"].mine()
         assert len(mine) == 1
         assert mine[0].id == "1"
+
+    def test_instances_matches_mine(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, calls = self._exec_stub(orm, [])
+        rows = ns["TodoList"].instances()
+        assert len(rows) == 1
+        assert rows[0].title == "T"
+        assert ("todo_list.list", {}) in calls
+
+    def test_count_returns_int(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, calls = self._exec_stub(orm, [])
+        assert ns["TodoList"].count() == 1
+        assert ("todo_list.count", {}) in calls
+
+    def test_find_passes_filter_dict(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, calls = self._exec_stub(orm, [])
+        rows = ns["TodoList"].find({"title": "T"})
+        assert ("todo_list.list", {"title": "T"}) in calls
+        assert len(rows) == 1
+
+    def test_find_translates_stub_relations(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, calls = self._exec_stub(orm, [])
+        lst = ns["TodoList"]._wrap({"id": "7", "title": "A", "owner": "alice"})
+        ns["TodoItem"].find({"todo_list": lst})
+        assert ("todo_item.list", {"todo_list_id": "7"}) in calls
+
+    def test_load_some_passes_pagination(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, calls = self._exec_stub(orm, [])
+        ns["TodoList"].load_some(from_id=5, count=10)
+        assert ("todo_list.list", {"from_id": 5, "count": 10}) in calls
+
+    def test_load_missing_returns_none(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, _ = self._exec_stub(orm, [])
+        assert ns["TodoList"].load("999") is None
+        assert ns["TodoList"].load("1").id == "1"
 
 
 class TestModuleImport:

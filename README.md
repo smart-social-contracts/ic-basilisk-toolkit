@@ -122,9 +122,10 @@ def __shell__(code: str) -> text:
     return orm.shell(code)   # sandboxed REPL; Cedar checks every mutation
 ```
 
-Users REPL with ORM-style stubs (`TodoList.create(...)`, `lst.title = "x"` auto-saves);
-every change crosses a host RPC gated by Cedar owner policies. See the
-[todo_list template](templates/todo_list).
+Users REPL with the native `ic-python-db` API (`TodoList.create(...)`, `TodoList.instances()`,
+`TodoList.count()`, `TodoList.find({...})`, `lst.title = "x"` auto-saves) — always
+Cedar-filtered to rows the caller may see. Every change crosses a host RPC gated by
+Cedar owner policies. See the [todo_list template](templates/todo_list).
 
 </td></tr>
 <tr>

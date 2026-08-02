@@ -23,7 +23,7 @@ try:
 except ImportError:  # pragma: no cover
     Slicer = None  # type: ignore[misc, assignment]
 
-_CRUD = ("create", "list", "get", "update", "delete")
+_CRUD = ("create", "list", "get", "update", "delete", "count")
 _SCALAR_TYPES = frozenset({"String", "Integer", "Boolean"})
 
 
@@ -148,12 +148,32 @@ def _generate_stub_source(
             f'        return cls._wrap(rpc("{prefix}.create", **_Stub._rpc_kwargs(kw)))',
             "",
             "    @classmethod",
-            "    def mine(cls):",
+            "    def instances(cls):",
+            "        # Cedar-filtered: only rows the caller may list.",
             f'        return [cls._wrap(d) for d in rpc("{prefix}.list")]',
             "",
             "    @classmethod",
+            "    def mine(cls):",
+            "        return cls.instances()",
+            "",
+            "    @classmethod",
+            "    def count(cls):",
+            "        # Caller-scoped row count (int; rows are not transferred).",
+            f'        return rpc("{prefix}.count")',
+            "",
+            "    @classmethod",
+            "    def find(cls, d):",
+            f'        return [cls._wrap(x) for x in rpc("{prefix}.list", **_Stub._rpc_kwargs(d))]',
+            "",
+            "    @classmethod",
+            "    def load_some(cls, from_id=1, count=50):",
+            f'        rows = rpc("{prefix}.list", from_id=from_id, count=count)',
+            "        return [cls._wrap(x) for x in rows]",
+            "",
+            "    @classmethod",
             "    def get(cls, id):",
-            f'        return cls._wrap(rpc("{prefix}.get", id=id))',
+            f'        d = rpc("{prefix}.get", id=id)',
+            "        return cls._wrap(d) if d else None",
             "",
             "    @classmethod",
             "    def load(cls, id):",
@@ -450,9 +470,13 @@ class SecureORM:
         row = cls(**scalar_kwargs, **relation_kwargs)
         return self._row_dict(cls, row)
 
-    def _list(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> list:
+    def _visible_rows(
+        self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]
+    ) -> List[Entity]:
+        """Rows of *cls* matching relation/scalar filters and Cedar `entity.list`."""
         kwargs = dict(kwargs or {})
         descriptor = self._schema.get(cls.__name__, {})
+
         filter_rels: Dict[str, str] = {}
         for rel_name, rel_desc in descriptor.get("relationships", {}).items():
             if rel_desc.get("type") != "ManyToOne":
@@ -461,35 +485,58 @@ class SecureORM:
             if id_key in kwargs:
                 filter_rels[rel_name] = str(kwargs.pop(id_key))
 
+        # Remaining kwargs are equality filters on attributes (native `find`
+        # semantics: unknown attributes simply never match).
+        scalar_filters = dict(kwargs)
+
         rows = list(cls.instances())
-        if filter_rels:
-            filtered = []
-            for row in rows:
-                match = True
-                for rel_name, rel_id in filter_rels.items():
-                    related = getattr(row, rel_name, None)
-                    if related is None or related._id != rel_id:
+        filtered: List[Entity] = []
+        for row in rows:
+            match = True
+            for rel_name, rel_id in filter_rels.items():
+                related = getattr(row, rel_name, None)
+                if related is None or related._id != rel_id:
+                    match = False
+                    break
+            if match:
+                for field_name, value in scalar_filters.items():
+                    if getattr(row, field_name, None) != value:
                         match = False
                         break
-                if match:
-                    filtered.append(row)
-            rows = filtered
+            if match:
+                filtered.append(row)
 
-        allowed: List[dict] = []
-        for row in rows:
+        return [
+            row
+            for row in filtered
             if self.engine.is_authorized(
-                principal_id,
-                "entity.list",
-                cls.__name__,
-                row._id,
-                row,
-            ):
-                allowed.append(self._row_dict(cls, row))
-        return allowed
+                principal_id, "entity.list", cls.__name__, row._id, row
+            )
+        ]
 
-    def _get(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> dict:
+    def _list(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> list:
+        kwargs = dict(kwargs or {})
+        # Pagination over *visible* rows (applied after Cedar, so page sizes do
+        # not leak the existence of hidden rows).
+        from_id = int(kwargs.pop("from_id", 1) or 1)
+        count = kwargs.pop("count", None)
+        count = int(count) if count is not None else None
+
+        rows = self._visible_rows(cls, principal_id, kwargs)
+        if from_id > 1:
+            rows = [r for r in rows if r._id.isdigit() and int(r._id) >= from_id]
+        if count is not None:
+            rows = rows[:count]
+        return [self._row_dict(cls, row) for row in rows]
+
+    def _count(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> int:
+        return len(self._visible_rows(cls, principal_id, kwargs or {}))
+
+    def _get(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> Optional[dict]:
         row_id = str(kwargs.get("id", ""))
-        row = self._load_row(cls, row_id)
+        row = cls.load(row_id)
+        if row is None:
+            return None
         self.engine.check(
             principal_id, "entity.get", cls.__name__, row_id, row
         )
@@ -551,6 +598,8 @@ class SecureORM:
             return self._create(cls, principal_id, kwargs or {})
         if op == "list":
             return self._list(cls, principal_id, kwargs or {})
+        if op == "count":
+            return self._count(cls, principal_id, kwargs or {})
         if op == "get":
             return self._get(cls, principal_id, kwargs or {})
         if op == "update":
