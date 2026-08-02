@@ -38,26 +38,92 @@ make test
 at `~/.config/basilisk/cpython_canister_template_cedar.wasm`, then deploys with
 `BASILISK_TEMPLATE_WASM` pointing at that artifact.
 
+`requirements.txt` installs `ic-basilisk-toolkit` from the parent repo (`-e ../..`)
+so template development always picks up local changes. If you copy this template
+outside the monorepo, replace that line with `ic-basilisk-toolkit>=0.5.0`.
+
 ## REPL usage
 
 ```bash
 basilisk-toolkit shell --canister todo_list
 ```
 
+Prompt shows `todo_list# ` (or a canister-id prefix when using a principal). The banner
+includes Cedar enforcement status and entity counts when `status()` is available.
+
 Inside the shell (native `ic-python-db` API, Cedar-filtered to rows you may see):
 
 ```python
-lst = TodoList.create(title="groceries")
-TodoList.instances()            # your lists (alias: TodoList.mine())
-TodoList.count()                # caller-scoped count, no rows transferred
-TodoList.load_some(from_id=1, count=50)
-lst.title = "shopping"          # auto-save on attribute write
+lst = TodoList(title="groceries")   # last value displayed automatically
+lst.public = True
+TodoList.instances()
+TodoList["1"]                       # None if missing; ✗ access denied if not yours
+TodoList.count()
+lst.title = "shopping"              # auto-save on attribute write
 lst.items()
-TodoItem.create(title="milk", todo_list=lst)
-TodoItem.find({"done": False})  # host-side equality filter
+TodoItem(title="milk", todo_list=lst)
+```
+
+Magic commands (client-side, no `icp` needed):
+
+```text
+%cedar policies      # current Cedar policy source
+%cedar status        # enforcement + warnings
+%entities            # row counts from status()
 ```
 
 Cross-user modification is denied by Cedar (`PermissionError`).
+
+## Cedar introspection (`__cedar__`)
+
+Read-only query endpoint (like `__browse__`, but for Cedar). Shows the schema and
+policy source currently loaded — including any runtime reload via `orm.reload_policies()`.
+
+```bash
+# Full snapshot: schema, base/extra/effective policies, enforcement status
+icp canister call todo_list __cedar__ '("{\"action\": \"snapshot\"}")' --query
+
+# Policy text only
+icp canister call todo_list __cedar__ '("{\"action\": \"policies\"}")' --query
+
+# From Python client tooling
+python3 -c "from ic_basilisk_toolkit.shell import canister_cedar; print(canister_cedar('policies', 'todo_list'))"
+```
+
+Actions: `snapshot` (default), `policies`, `schema`, `status`.
+
+## Runtime custom policies (public read demo)
+
+The template ships with **owner-only** policies at boot. List owners can load extra
+Cedar at runtime to allow read access to lists marked `public`:
+
+```bash
+# Alice creates a public list
+icp canister call todo_list __shell__ '("lst = TodoList.create(title='"'"'groceries'"'"'); lst.public = True")'
+
+# Bob cannot see it yet (owner-only)
+icp identity default bob
+icp canister call todo_list __shell__ '("print(repr([x.title for x in TodoList.instances()]))")'
+# → []
+
+# Alice enables runtime public-read policies
+icp identity default alice
+icp canister call todo_list enable_public_read '(true)'
+
+# Verify policies loaded
+icp canister call todo_list __cedar__ '("{\"action\": \"policies\"}")' --query
+
+# Bob can now read (but not write) public lists
+icp identity default bob
+icp canister call todo_list __shell__ '("print(repr([x.title for x in TodoList.instances()]))")'
+
+# Disable again
+icp identity default alice
+icp canister call todo_list enable_public_read '(false)'
+```
+
+Custom policy source lives in `src/cedar_extra.py`. Edit it, redeploy, then toggle
+with `enable_public_read` — no Cedar file bundling required at runtime.
 
 ## Two identities (cross-user test)
 
@@ -97,11 +163,15 @@ is the ORM stub API (backed by `rpc()` internally). Every host-side mutation pas
 a Cedar authorization check. The `owner` field is always set host-side from
 `ic.caller()` — sandbox code cannot forge ownership.
 
+For a step-by-step walkthrough — user-facing stub ORM (`TodoList.load`, …),
+internal `rpc()` bridge, Cedar, host DB — see
+[docs/SECURE_ORM.md](../../docs/SECURE_ORM.md).
+
 ## Project layout
 
 ```
 src/
-  main.py              — entities, setup_secure_orm(), __shell__, status
+  main.py              — entities, setup_secure_orm(), __shell__, __cedar__, status
 scripts/
   setup_cedar_template.sh
   test_local.py

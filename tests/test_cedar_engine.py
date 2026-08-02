@@ -115,8 +115,31 @@ class TestLoad:
         assert engine.enabled() is True
         assert "blanket permit" in engine.status()["warnings"][0]
 
+    def test_load_tracks_extra_policies(self, engine, fake, monkeypatch):
+        monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
+        module = fake({"ok": True, "warnings": []})
+        extra = 'permit(principal, action, resource);'
+        assert engine.load(extra) is True
+        assert engine.extra_policies() == extra
+        assert extra in engine.effective_policies()
+        assert module.calls[-1][1][1] == engine.effective_policies()
 
-class TestDeclaredActions:
+
+class TestPolicySnapshot:
+    def test_effective_policies_without_extra(self, engine):
+        assert engine.effective_policies() == TEST_POLICIES
+
+    def test_snapshot_includes_schema_and_policies(self, engine, fake, monkeypatch):
+        monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
+        fake({"ok": True, "warnings": []})
+        engine.load("// extra\npermit(principal, action, resource);")
+        snap = engine.snapshot()
+        assert snap["namespace"] == "TodoApp"
+        assert snap["schema"] == TEST_SCHEMA
+        assert snap["base_policies"] == TEST_POLICIES
+        assert snap["extra_policies"].startswith("// extra")
+        assert snap["has_extra_policies"] is True
+        assert "permit(principal, action, resource);" in snap["policies"]
     def test_parses_action_names(self, engine):
         assert engine.declared_actions() == frozenset(
             {"read", "write", "entity.create", "entity.get", "entity.update"}

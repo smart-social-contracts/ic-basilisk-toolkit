@@ -24,6 +24,42 @@ except ImportError:  # pragma: no cover
     Slicer = None  # type: ignore[misc, assignment]
 
 _CRUD = ("create", "list", "get", "update", "delete", "count")
+
+
+def _format_sandbox_error(message: str) -> str:
+    """Flatten nested sandbox/RPC errors for REPL display."""
+    msg = message.strip()
+    for prefix in (
+        "sandboxed call raised: ",
+        "RuntimeError: rpc failed: ",
+        "PermissionError: ",
+    ):
+        if msg.startswith(prefix):
+            msg = msg[len(prefix) :].strip()
+    if "denied by policy" in msg and not msg.lower().startswith("access denied"):
+        msg = msg.replace("' denied by policy", " denied").replace("denied by policy", "denied")
+        if "entity." in msg:
+            action = msg.strip("'")
+            msg = f"access denied: {action} (not authorized for your principal)"
+    if msg.lower().startswith("access denied") or " denied" in msg:
+        return f"✗ {msg}"
+    return msg
+
+
+def _rpc_deny_message(action: str, kwargs: dict, exc: PermissionError) -> str:
+    """Human-readable Cedar denial for sandbox RPC failures."""
+    if "." in action:
+        entity_key, op = action.rsplit(".", 1)
+    else:
+        entity_key, op = action, "action"
+    row_id = kwargs.get("id", "")
+    entity_label = entity_key.replace("_", " ").title().replace(" ", "")
+    if row_id:
+        return (
+            f"access denied: {op} on {entity_label}/{row_id} "
+            f"(not authorized for your principal)"
+        )
+    return f"access denied: {op} on {entity_label} ({exc})"
 _SCALAR_TYPES = frozenset({"String", "Integer", "Boolean"})
 
 
@@ -211,6 +247,10 @@ def _generate_stub_source(
 
     entity_names = ", ".join(f'"{cls.__name__}"' for cls in sorted_entities)
     classes_section = "\n\n".join(class_blocks)
+    rebuild_lines = "\n".join(
+        f'{cls.__name__} = _make_entity_class("{cls.__name__}", "{_snake_case(cls.__name__)}", {cls.__name__})'
+        for cls in sorted_entities
+    )
 
     return f'''
 class _Stub:
@@ -262,7 +302,42 @@ class _Stub:
         return f"{{cls}}({{data!r}})"
 
 
+def _make_entity_class(name, prefix, base):
+    # Constructor: TodoList(title="...") → create RPC (matches ic-python-db).
+    def __init__(self, **kw):
+        data = rpc(prefix + ".create", **_Stub._rpc_kwargs(kw))
+        object.__setattr__(self, "_data", dict(data))
+
+    # Class subscription: TodoList["1"] → load RPC (matches ic-python-db).
+    def __class_getitem__(cls, key):
+        d = rpc(prefix + ".get", id=str(key))
+        return cls._wrap(d) if d else None
+
+    attrs = {{
+        "_prefix": prefix,
+        "__init__": __init__,
+        "__class_getitem__": __class_getitem__,
+    }}
+    for attr in dir(_Stub):
+        if attr in attrs:
+            continue
+        if attr.startswith("_") and attr not in ("_prefix", "_wrap"):
+            continue
+        attrs[attr] = getattr(_Stub, attr)
+    for attr in dir(base):
+        if attr in attrs:
+            continue
+        if attr.startswith("_") and attr not in ("_prefix", "_wrap"):
+            continue
+        attrs[attr] = getattr(base, attr)
+    return type(name, (_Stub,), attrs)
+
+
 {classes_section}
+
+
+# Rebuild classes with constructor + class-subscription support.
+{rebuild_lines}
 
 
 def eval_repl(code):
@@ -275,11 +350,27 @@ def eval_repl(code):
     old_stderr = sys.stderr
     sys.stdout = buf
     sys.stderr = err
-    ns = {{"rpc": globals().get("rpc"), "__builtins__": __builtins__}}
-    for _name in ({entity_names},):
-        ns[_name] = globals()[_name]
+    # Persistent REPL namespace: variables survive across calls.
+    ns = globals().setdefault("_repl_ns", None)
+    if ns is None:
+        ns = {{"rpc": globals().get("rpc"), "__builtins__": __builtins__}}
+        for _name in ({entity_names},):
+            ns[_name] = globals()[_name]
+        globals()["_repl_ns"] = ns
+    result = None
+    use_eval = False
+    code_stripped = code.strip()
+    if code_stripped and "\\n" not in code_stripped:
+        try:
+            compile(code_stripped, "<repl>", "eval")
+            use_eval = True
+        except SyntaxError:
+            use_eval = False
     try:
-        exec(compile(code, "<repl>", "exec"), ns, ns)
+        if use_eval:
+            result = eval(compile(code_stripped, "<repl>", "eval"), ns, ns)
+        else:
+            exec(compile(code, "<repl>", "exec"), ns, ns)
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
@@ -287,6 +378,8 @@ def eval_repl(code):
     err_out = err.getvalue()
     if err_out:
         out += err_out
+    if use_eval and result is not None:
+        out += repr(result) + "\\n"
     return out
 '''
 
@@ -382,6 +475,58 @@ class SecureORM:
                 counts[cls.__name__] = -1
         out["entities"] = counts
         return out
+
+    def reload_policies(self, extra_policies: str = "") -> dict:
+        """Reload Cedar with *extra_policies* appended to auto-generated base policies."""
+        ok = self.engine.load(extra_policies)
+        out = dict(self.engine.snapshot())
+        out["ok"] = ok
+        return out
+
+    def cedar(self, query: str) -> str:
+        """Read-only Cedar introspection for a ``__cedar__`` query endpoint.
+
+        Accepts JSON ``{"action": ...}`` or a plain action name. Actions:
+
+        - ``snapshot`` (default) — schema, base/extra/effective policies, status
+        - ``policies`` — policy text only (base, extra, effective)
+        - ``schema`` — Cedar schema source
+        - ``status`` — engine availability/enforcement/warnings
+        """
+        import json
+
+        raw = (query or "").strip()
+        if not raw:
+            q: Dict[str, Any] = {"action": "snapshot"}
+        elif raw.startswith("{"):
+            try:
+                q = json.loads(raw)
+            except Exception:
+                return json.dumps({"error": "invalid JSON"})
+        else:
+            q = {"action": raw}
+
+        action = q.get("action", "snapshot")
+        if action == "snapshot":
+            return json.dumps(self.engine.snapshot())
+        if action == "schema":
+            return json.dumps({"schema": self.engine.schema})
+        if action == "policies":
+            return json.dumps(
+                {
+                    "base_policies": self.engine.policies,
+                    "extra_policies": self.engine.extra_policies(),
+                    "policies": self.engine.effective_policies(),
+                }
+            )
+        if action == "status":
+            return json.dumps(self.engine.status())
+        return json.dumps(
+            {
+                "error": f"unknown action {action!r}",
+                "actions": ["snapshot", "schema", "policies", "status"],
+            }
+        )
 
     def _row_dict(self, cls: Type[SecureEntity], row: Entity) -> Dict[str, Any]:
         descriptor = self._schema.get(cls.__name__, {})
@@ -640,8 +785,10 @@ class SecureORM:
                 raise PermissionError("context mismatch")
             try:
                 return self.handle_rpc(principal_id, action, kwargs or {})
-            except PermissionError:
-                raise
+            except PermissionError as exc:
+                raise PermissionError(
+                    _rpc_deny_message(action, kwargs or {}, exc)
+                ) from exc
             except RpcError as exc:
                 raise RuntimeError(str(exc)) from exc
 
@@ -660,8 +807,8 @@ class SecureORM:
             result = call_sandboxed(handle, "eval_repl", {"code": code})
         except BudgetExceeded as exc:
             return f"BudgetExceeded: {exc}\n"
-        except RuntimeError as exc:
-            return f"{exc}\n"
+        except (RuntimeError, PermissionError) as exc:
+            return _format_sandbox_error(str(exc)) + "\n"
 
         if isinstance(result, str):
             return result

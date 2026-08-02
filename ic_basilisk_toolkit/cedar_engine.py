@@ -49,6 +49,7 @@ class CedarEngine:
         self._warnings: List[str] = []
         self._error = ""
         self._actions_cache: Optional[frozenset] = None
+        self._extra_policies = ""
 
     def available(self) -> bool:
         """Whether the native Cedar module exists in this build."""
@@ -84,6 +85,7 @@ class CedarEngine:
 
         self._loaded = True
         self._error = ""
+        self._extra_policies = extra_policies
         self._warnings = list(warnings or ())
         for warning in self._warnings:
             _log(f"cedar_engine: {warning}")
@@ -97,6 +99,29 @@ class CedarEngine:
             "attempted": self._attempted,
             "error": self._error,
             "warnings": list(self._warnings),
+            "has_extra_policies": bool(self._extra_policies),
+        }
+
+    def extra_policies(self) -> str:
+        """Custom policy text last loaded successfully (empty if defaults only)."""
+        return self._extra_policies
+
+    def effective_policies(self) -> str:
+        """Full Cedar policy source currently loaded (base + extra)."""
+        if self._extra_policies:
+            return f"{self.policies}\n\n{self._extra_policies}"
+        return self.policies
+
+    def snapshot(self) -> dict:
+        """Schema, policy sources, and engine status for introspection endpoints."""
+        return {
+            **self.status(),
+            "namespace": self.namespace,
+            "principal_type": self.principal_type,
+            "schema": self.schema,
+            "base_policies": self.policies,
+            "extra_policies": self._extra_policies,
+            "policies": self.effective_policies(),
         }
 
     def declared_actions(self) -> frozenset:

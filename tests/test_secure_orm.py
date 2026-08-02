@@ -378,6 +378,108 @@ class TestStubBehavior:
         assert ns["TodoList"].load("999") is None
         assert ns["TodoList"].load("1").id == "1"
 
+    def test_constructor_creates(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, calls = self._exec_stub(orm, [])
+        lst = ns["TodoList"](title="New")
+        assert lst.title == "New"
+        assert lst.id == "2"
+        assert ("todo_list.create", {"title": "New"}) in calls
+
+    def test_class_getitem_loads(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, calls = self._exec_stub(orm, [])
+        lst = ns["TodoList"]["1"]
+        assert lst.id == "1"
+        assert lst.title == "T"
+        assert ("todo_list.get", {"id": "1"}) in calls
+
+    def test_class_getitem_missing_returns_none(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, _ = self._exec_stub(orm, [])
+        assert ns["TodoList"]["999"] is None
+
+    def test_repl_namespace_persists(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, _ = self._exec_stub(orm, [])
+        eval_repl = ns["eval_repl"]
+        eval_repl("a = 5")
+        out = eval_repl("print(a)")
+        assert "5" in out
+
+    def test_repl_last_expression_displayed(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, calls = self._exec_stub(orm, [])
+        out = ns["eval_repl"]("TodoList.create(title='New')")
+        assert "TodoList(" in out
+        assert ("todo_list.create", {"title": "New"}) in calls
+
+    def test_repl_assignment_no_extra_display(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        ns, _ = self._exec_stub(orm, [])
+        out = ns["eval_repl"]("a = 5")
+        assert out.strip() == ""
+
+
+class TestReplErrors:
+    def test_format_sandbox_error_strips_nesting(self):
+        from ic_basilisk_toolkit.secure_orm import _format_sandbox_error
+
+        raw = (
+            "sandboxed call raised: PermissionError: "
+            "'entity.get' denied by policy"
+        )
+        out = _format_sandbox_error(raw)
+        assert out.startswith("✗")
+        assert "access denied" in out.lower()
+
+    def test_rpc_deny_message_includes_entity_and_id(self):
+        from ic_basilisk_toolkit.secure_orm import _rpc_deny_message
+
+        msg = _rpc_deny_message(
+            "todo_list.get",
+            {"id": "1"},
+            PermissionError("'entity.get' denied by policy"),
+        )
+        assert "TodoList/1" in msg
+        assert "access denied" in msg
+
+
+class TestCedarIntrospection:
+    def test_cedar_policies_action(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        import json
+
+        out = json.loads(orm.cedar('{"action": "policies"}'))
+        assert "base_policies" in out
+        assert "extra_policies" in out
+        assert "policies" in out
+        assert "TodoApp::TodoList" in out["policies"] or "entity.create" in out["policies"]
+
+    def test_cedar_snapshot_default(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        import json
+
+        out = json.loads(orm.cedar(""))
+        assert out["namespace"] == "TodoApp"
+        assert "schema" in out
+        assert "policies" in out
+
+    def test_cedar_unknown_action(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        import json
+
+        out = json.loads(orm.cedar('{"action": "nope"}'))
+        assert "error" in out
+
+    def test_reload_policies_updates_extra(self, fake_cedar):
+        orm = _make_orm(fake_cedar)
+        extra = '// custom\npermit(principal, action, resource);'
+        out = orm.reload_policies(extra)
+        assert out["ok"] is True
+        assert out["extra_policies"] == extra
+        assert extra in out["policies"]
+
 
 class TestModuleImport:
     def test_import_without_native_modules(self, monkeypatch):

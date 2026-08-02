@@ -23,6 +23,10 @@ def icp_call(method: str, arg: str) -> str:
     return run(["icp", "canister", "call", CANISTER, method, arg])
 
 
+def icp_call_query(method: str, arg: str) -> str:
+    return run(["icp", "canister", "call", CANISTER, method, arg, "--query"])
+
+
 def shell(code: str) -> str:
     escaped = code.replace("\\", "\\\\").replace('"', '\\"')
     return icp_call("__shell__", f'("{escaped}")')
@@ -90,13 +94,33 @@ def icp_whoami() -> str:
     return "unknown"
 
 
+def parse_repr_list(text: str) -> list:
+    body = unwrap_candid(text).strip()
+    m = re.search(r"\[.*\]", body, re.DOTALL)
+    if not m:
+        raise ValueError(f"no list in shell output: {body!r}")
+    return ast.literal_eval(m.group(0))
+
+
+def cedar(action: str) -> dict:
+    import json
+
+    escaped = action.replace("\\", "\\\\").replace('"', '\\"')
+    raw = unwrap_candid(icp_call_query("__cedar__", f'("{escaped}")'))
+    return json.loads(raw)
+
+
 def main() -> int:
     print("== status ==")
     print(clean_icp_output(icp_call("status", "()")))
 
     owner_identity = icp_whoami()
     print(f"== create list ({owner_identity}) ==")
-    out = shell("lst = TodoList.create(title='groceries'); print(repr({'id': lst.id, 'title': lst.title}))")
+    out = shell(
+        "lst = TodoList.create(title='groceries'); "
+        "lst.public = True; "
+        "print(repr({'id': lst.id, 'title': lst.title, 'public': lst.public}))"
+    )
     created = unwrap_candid(out)
     print(created)
     row = parse_repr_dict(out)
@@ -140,6 +164,69 @@ def main() -> int:
             print("FAIL: expected Cedar denial")
             return 1
         print("PASS: cross-user update denied")
+        icp_use(owner_identity)
+
+        print("== runtime public-read policy demo ==")
+        print("  (public list exists but extra policies not loaded yet)")
+        icp_use(other)
+        bob_before = parse_repr_list(
+            shell("print(repr([{'id': x.id} for x in TodoList.instances()]))")
+        )
+        print(f"  bob instances before enable: {bob_before}")
+        if bob_before:
+            print("FAIL: bob should not see private/public list before enable_public_read")
+            return 1
+
+        icp_use(owner_identity)
+        enable_out = unwrap_candid(icp_call("enable_public_read", "(true)"))
+        print(f"  enable_public_read(true): {enable_out}")
+        if "ok': True" not in enable_out.replace(" ", "") and '"ok":true' not in enable_out.lower():
+            print("FAIL: enable_public_read(true) did not succeed")
+            return 1
+
+        cedar_policies = cedar('{"action": "policies"}')
+        if "resource.public == true" not in cedar_policies.get("extra_policies", ""):
+            print("FAIL: __cedar__ extra_policies missing public-read rule")
+            return 1
+        print("  __cedar__: extra public-read policies loaded")
+
+        icp_use(other)
+        bob_after = parse_repr_list(
+            shell("print(repr([{'id': x.id} for x in TodoList.instances()]))")
+        )
+        print(f"  bob instances after enable: {bob_after}")
+        if not bob_after or bob_after[0]["id"] != list_id:
+            print("FAIL: bob should see public list after enable_public_read")
+            return 1
+
+        deny_read_write = shell(
+            f"try:\n"
+            f"    lst = TodoList.load('{list_id}')\n"
+            f"    lst.title = 'hacked by bob'\n"
+            f"    print('unexpected write success')\n"
+            f"except Exception as e:\n"
+            f"    print(repr(str(e)))"
+        )
+        deny_body = unwrap_candid(deny_read_write)
+        print(f"  bob write denied: {deny_body}")
+        if "PermissionError" not in deny_body and "denied" not in deny_body.lower():
+            print("FAIL: bob should still be denied on write")
+            return 1
+
+        icp_use(owner_identity)
+        disable_out = unwrap_candid(icp_call("enable_public_read", "(false)"))
+        print(f"  enable_public_read(false): {disable_out}")
+
+        icp_use(other)
+        bob_final = parse_repr_list(
+            shell("print(repr([{'id': x.id} for x in TodoList.instances()]))")
+        )
+        print(f"  bob instances after disable: {bob_final}")
+        if bob_final:
+            print("FAIL: bob should not see list after public read disabled")
+            return 1
+        print("PASS: runtime public-read policy toggle")
+
         icp_use(owner_identity)
 
     print("== add item ==")

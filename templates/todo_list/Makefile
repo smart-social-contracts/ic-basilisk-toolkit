@@ -5,7 +5,6 @@ BASILISK_DEV ?= ../../../basilisk
 
 deps:
 	pip install -r requirements.txt
-	pip install -e ../..
 	pip install -e $(BASILISK_DEV)
 
 cedar-template:

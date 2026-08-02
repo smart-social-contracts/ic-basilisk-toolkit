@@ -118,6 +118,27 @@ def _is_principal(ident: str) -> bool:
     return bool(re.match(r"^[a-z0-9]{5}(-[a-z0-9]{5})+-[a-z0-9]{3}$", ident or ""))
 
 
+def _repl_prompt_label(canister: str) -> str:
+    """Short label for the interactive REPL prompt."""
+    if _is_principal(canister):
+        return canister.split("-")[0]
+    return canister
+
+
+def _repl_prompt(canister: str, *, continuation: bool = False) -> str:
+    label = _repl_prompt_label(canister)
+    if continuation:
+        return "...     "
+    return f"{label}# "
+
+
+def _format_repl_error(text: str) -> str:
+    """Clean up canister REPL error strings for display."""
+    from ic_basilisk_toolkit.secure_orm import _format_sandbox_error
+
+    return _format_sandbox_error(text)
+
+
 def _is_transient_dfx_error(stderr: str) -> bool:
     s = (stderr or "").lower()
     transient_markers = [
@@ -189,6 +210,22 @@ def _run_dfx_with_retries(
     return last  # type: ignore[return-value]
 
 
+def canister_query(method: str, arg: str, canister: str, network: str = None) -> str:
+    """Query a canister method (read-only, no consensus)."""
+    cmd = _icp_call_cmd(canister, network, extra_flags=["--query"])
+    cmd.extend([canister, method, arg, "--query"])
+
+    try:
+        r = _run_dfx_with_retries(cmd, timeout_s=30)
+        if r.returncode != 0:
+            return f"[icp error] {r.stderr.strip()}"
+        return _parse_candid(r.stdout)
+    except subprocess.TimeoutExpired:
+        return "[error] canister call timed out (30s)"
+    except FileNotFoundError:
+        return "[error] icp not found — install icp-cli"
+
+
 def canister_exec(code: str, canister: str, network: str = None) -> str:
     """Send Python code to the canister and return the output."""
     escaped = code.replace('"', '\\"').replace("\n", "\\n")
@@ -217,6 +254,29 @@ def canister_browse(action: str, canister: str, network: str = None, **kwargs) -
     escaped = query.replace('"', '\\"')
     cmd = _icp_call_cmd(canister, network, extra_flags=["--query"])
     cmd.extend([canister, "__browse__", f'("{escaped}")'])
+
+    try:
+        r = _run_dfx_with_retries(cmd, timeout_s=30)
+        if r.returncode != 0:
+            return {"error": r.stderr.strip()}
+        raw = _parse_candid(r.stdout)
+        return _json.loads(raw)
+    except subprocess.TimeoutExpired:
+        return {"error": "canister call timed out (30s)"}
+    except FileNotFoundError:
+        return {"error": "icp not found — install icp-cli"}
+    except (_json.JSONDecodeError, ValueError):
+        return {"error": f"invalid response: {raw}"}
+
+
+def canister_cedar(action: str, canister: str, network: str = None) -> dict:
+    """Query Cedar schema/policies read-only via the ``__cedar__`` endpoint."""
+    import json as _json
+
+    query = _json.dumps({"action": action})
+    escaped = query.replace('"', '\\"')
+    cmd = _icp_call_cmd(canister, network, extra_flags=["--query"])
+    cmd.extend([canister, "__cedar__", f'("{escaped}")'])
 
     try:
         r = _run_dfx_with_retries(cmd, timeout_s=30)
@@ -4295,6 +4355,34 @@ def _handle_magic(line: str, canister: str, network: str) -> str:
         args = stripped[7:].strip()
         return _handle_crypto(args, canister, network)
 
+    # %cedar — Cedar schema/policies introspection (__cedar__ query endpoint)
+    if stripped == "%cedar" or stripped.startswith("%cedar "):
+        import json as _json
+
+        parts = stripped.split()
+        action = parts[1] if len(parts) > 1 else "snapshot"
+        data = canister_cedar(action, canister, network)
+        if isinstance(data, dict) and "error" in data:
+            return f"[error] {data['error']}"
+        return _json.dumps(data, indent=2)
+
+    # %entities — entity row counts from status() (Secure ORM canisters)
+    if stripped == "%entities":
+        import json as _json
+
+        raw = canister_query("status", "()", canister, network)
+        if raw.startswith("["):
+            return raw
+        try:
+            status = _json.loads(raw)
+        except _json.JSONDecodeError:
+            return raw
+        entities = status.get("entities")
+        if not isinstance(entities, dict):
+            return raw or "[error] no entity counts in status()"
+        lines = [f"{name}: {count}" for name, count in sorted(entities.items())]
+        return "\n".join(lines) if lines else "(no entities)"
+
     # %whoami — show the principal of the current icp identity
     if stripped == "%whoami":
         cmd = ["icp", "identity", "principal"]
@@ -4343,12 +4431,26 @@ def _print_output(text: str):
     if text:
         text = text.rstrip()
         if text:
+            if any(
+                marker in text
+                for marker in (
+                    "sandboxed call raised:",
+                    "denied by policy",
+                    "access denied",
+                    "✗ ",
+                    "[icp error]",
+                    "[error]",
+                )
+            ):
+                text = _format_repl_error(text)
             print(text)
     sys.stdout.flush()
 
 
 def _welcome_banner(canister: str, network: str):
     """Minimalistic welcome banner - just essential info."""
+    import json as _json
+
     net_label = network or "local"
     ver = _get_basilisk_version()
     print(f"basilisk shell {ver} | {canister} ({net_label})")
@@ -4364,8 +4466,30 @@ def _welcome_banner(canister: str, network: str):
             if len(principal) > 20:
                 principal = principal[:12] + "..." + principal[-6:]
             print(f"  principal: {principal}")
-    except:
+    except Exception:
         pass
+
+    # Optional Secure ORM / Cedar context from status() query
+    try:
+        raw = canister_query("status", "()", canister, network)
+        if raw and not raw.startswith("["):
+            status = _json.loads(raw)
+            enforcing = status.get("enforcing", status.get("available"))
+            extra = status.get("has_extra_policies")
+            parts = []
+            if enforcing is not None:
+                parts.append(f"cedar: {'enforcing' if enforcing else 'off'}")
+            if extra is not None:
+                parts.append(f"public_read: {'on' if extra else 'off'}")
+            entities = status.get("entities")
+            if isinstance(entities, dict) and entities:
+                counts = ", ".join(f"{k}={v}" for k, v in sorted(entities.items()))
+                parts.append(f"entities: {counts}")
+            if parts:
+                print(f"  {' | '.join(parts)}")
+    except Exception:
+        pass
+
     print("  :help for commands")
     print()
 
@@ -4459,6 +4583,8 @@ REPL COMMANDS
   %whoami                  Show principal of the current icp identity
   %info                    Show canister info (principal, cycles)
       Python: ic.id(), ic.caller(), ic.canister_balance()
+  %cedar [action]          Cedar schema/policies (snapshot, policies, schema, status)
+  %entities                Entity row counts from status()
   %get <remote> [local]    Download file from canister
   %put <local> [remote]    Upload file to canister
   !<cmd>                   Run local OS command
@@ -4488,7 +4614,7 @@ BASILISK SHELL \u2014 :help [topic] for details
   vetkey   VetKey encryption (%vetkey encrypt, decrypt, ...)
   group    Encryption groups (%group create, add, ...)
   crypto   File encryption (%crypto encrypt, share, ...)
-  repl     REPL commands (%who, %info, %get, %put, !)
+  repl     REPL commands (%who, %info, %cedar, %entities, %get, %put, !)
 
 Examples:
   %ls /myapp                %db list User 10
@@ -4511,7 +4637,7 @@ def run_interactive(canister: str, network: str):
 
     while True:
         try:
-            prompt = "basilisk>>> " if not buffer else "...        "
+            prompt = _repl_prompt(canister, continuation=bool(buffer))
             line = input(prompt)
         except (EOFError, KeyboardInterrupt):
             print()

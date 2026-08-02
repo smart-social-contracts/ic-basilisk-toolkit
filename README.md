@@ -125,7 +125,8 @@ def __shell__(code: str) -> text:
 Users REPL with the native `ic-python-db` API (`TodoList.create(...)`, `TodoList.instances()`,
 `TodoList.count()`, `TodoList.find({...})`, `lst.title = "x"` auto-saves) — always
 Cedar-filtered to rows the caller may see. Every change crosses a host RPC gated by
-Cedar owner policies. See the [todo_list template](templates/todo_list).
+Cedar owner policies. See the [todo_list template](templates/todo_list) and
+[how the sandbox/Cedar/RPC pipeline works](docs/SECURE_ORM.md).
 
 </td></tr>
 <tr>
@@ -140,9 +141,15 @@ from ic_basilisk_toolkit.cedar_engine import CedarEngine
 engine = CedarEngine("TodoApp", "User", schema, policies)
 engine.load()                      # fail-closed; parses + validates at startup
 engine.check(caller, "entity.update", "TodoList", row_id, row)
+
+@query
+def __cedar__(query: str) -> text:
+    return orm.cedar(query)   # read-only: schema, policies, status
 ```
 
-Requires the Cedar canister template artifact (`_basilisk_cedar`).
+Requires the Cedar canister template artifact (`_basilisk_cedar`). Policy text is tracked
+in Python (the native module does not export loaded policies). Use ``reload_policies()``
+to hot-swap extra permits at runtime; ``__cedar__`` shows what is currently loaded.
 
 </td></tr>
 <tr>
