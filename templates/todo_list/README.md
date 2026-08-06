@@ -162,8 +162,8 @@ User Python runs in an isolated Basilisk subinterpreter. The only bridge to the 
 is the ORM stub API (backed by six generic `orm.*` RPC verbs with an `_entity`
 kwarg — the C sandbox gate allows at most 32 actions). Every host-side mutation passes
 a Cedar authorization check. The `owner` field is always set host-side from
-`ic.caller()` — sandbox code cannot forge ownership. Each `__shell__` invocation
-gets a fresh REPL namespace; variables do not persist across calls.
+`ic.caller()` — sandbox code cannot forge ownership. Variables persist per principal
+within the sandbox subinterpreter across `__shell__` invocations.
 
 For a step-by-step walkthrough — user-facing stub ORM (`TodoList.load`, …),
 internal `rpc()` bridge, Cedar, host DB — see

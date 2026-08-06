@@ -446,18 +446,13 @@ class TestStubBehavior:
         ns, _ = self._exec_stub(orm, [])
         assert ns["TodoList"]["999"] is None
 
-    def test_repl_namespace_isolated(self, fake_cedar):
+    def test_repl_namespace_persists(self, fake_cedar):
         orm = _make_orm(fake_cedar)
         ns, _ = self._exec_stub(orm, [])
         eval_repl = ns["eval_repl"]
         eval_repl("a = 5")
-        out = eval_repl(
-            "try:\n"
-            "    a\n"
-            "except NameError as e:\n"
-            "    print(repr(e))"
-        )
-        assert "NameError" in out
+        out = eval_repl("print(a)")
+        assert out == "5\n"
 
     def test_repl_last_expression_displayed(self, fake_cedar):
         orm = _make_orm(fake_cedar)

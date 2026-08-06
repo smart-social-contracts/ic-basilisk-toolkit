@@ -413,10 +413,13 @@ def eval_repl(code):
     old_stderr = sys.stderr
     sys.stdout = buf
     sys.stderr = err
-    # Fresh namespace per call — REPL variables must not leak across __shell__ invocations.
-    ns = {{"rpc": globals().get("rpc"), "__builtins__": __builtins__}}
-    for _name in ({entity_names},):
-        ns[_name] = globals()[_name]
+    # Persistent REPL namespace: variables survive across calls.
+    ns = globals().setdefault("_repl_ns", None)
+    if ns is None:
+        ns = {{"rpc": globals().get("rpc"), "__builtins__": __builtins__}}
+        for _name in ({entity_names},):
+            ns[_name] = globals()[_name]
+        globals()["_repl_ns"] = ns
     result = None
     use_eval = False
     code_stripped = code.strip()
