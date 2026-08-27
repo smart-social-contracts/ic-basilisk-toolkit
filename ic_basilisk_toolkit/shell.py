@@ -11,6 +11,7 @@ Usage:
     basilisk shell --canister <id> [--network <net>] script.py  File mode
     echo "print(42)" | basilisk shell --canister <id>           Pipe mode
     basilisk shell --canister <id> --verbose                   Show principal / trap / backtrace
+    basilisk shell --canister <id> --raw                       Exact canister strings (no pretty-print)
 
 Shell commands:
     %ls [path]    List canister filesystem
@@ -41,6 +42,7 @@ Shell commands:
     %vetkey decrypt <file|text>   Decrypt file or text with vetKeys
     %vetkey result                Check last vetkey result
     %info         Show canister info (principal, cycles, status, deploy)
+    %raw [on|off] Disable JSON pretty-print (toggle; scripts can use --raw)
     !<cmd>        Run a local OS command (e.g. !ls, !cat file.py)
     :q / exit     Quit the shell
     :help         Show this help
@@ -48,6 +50,7 @@ Shell commands:
 
 import argparse
 import ast
+import json
 import os
 import re
 import subprocess
@@ -331,6 +334,9 @@ _IDENTITY = None
 
 # --verbose: keep IC trap / principal / backtrace on reject
 _VERBOSE = False
+
+# --raw / %raw: print exact canister strings (skip local JSON pretty-print)
+_RAW_OUTPUT = False
 
 
 def _net_flags(canister: str, network: str = None) -> list[str]:
@@ -4388,9 +4394,29 @@ def _handle_crypto(args: str, canister: str, network: str) -> str:
     return f"Unknown crypto command: {subcmd}\n\n" + _CRYPTO_USAGE
 
 
+def _handle_raw_magic(stripped: str) -> str:
+    """Toggle or set local raw-output mode. Never sent to the canister."""
+    global _RAW_OUTPUT
+    arg = stripped[4:].strip().lower()
+    if arg in ("on", "1", "true"):
+        _RAW_OUTPUT = True
+        return "raw output on"
+    if arg in ("off", "0", "false"):
+        _RAW_OUTPUT = False
+        return "raw output off"
+    if arg == "":
+        _RAW_OUTPUT = not _RAW_OUTPUT
+        return "raw output on" if _RAW_OUTPUT else "raw output off"
+    return "Usage: %raw [on|off]"
+
+
 def _handle_magic(line: str, canister: str, network: str) -> str:
     """Handle % magic commands. Returns output or None if not a magic command."""
     stripped = line.strip()
+
+    # %raw — local pretty-print toggle (never executed on the canister)
+    if stripped == "%raw" or stripped.startswith("%raw "):
+        return _handle_raw_magic(stripped)
 
     # %run <file> — execute a file from canister memfs
     if stripped.startswith("%run "):
@@ -4597,9 +4623,39 @@ def _is_interactive():
     return sys.stdin.isatty()
 
 
+def _format_shell_result(payload: str, *, raw: bool | None = None) -> str:
+    """Pretty-print JSON ``__shell__`` results locally. Non-JSON is unchanged.
+
+    If *payload* is JSON, or a string that ``json.loads`` as JSON, return
+    ``json.dumps(..., indent=2, ensure_ascii=False)``. ``raw=True`` (or the
+    ``--raw`` / ``%raw`` session flag) returns the exact canister string.
+    Never imports or runs ``pprint`` on the canister.
+    """
+    if payload is None:
+        return payload
+    if raw is None:
+        raw = _RAW_OUTPUT
+    if raw:
+        return payload
+    if not isinstance(payload, str) or not payload.strip():
+        return payload
+    try:
+        value = json.loads(payload)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return payload
+    # JSON-in-a-string: unwrap one layer when the parsed value is itself JSON.
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+    return json.dumps(value, indent=2, ensure_ascii=False)
+
+
 def _print_output(text: str):
     """Print canister output, stripping trailing whitespace."""
     if text:
+        text = _format_shell_result(text)
         text = text.rstrip()
         if text:
             if _looks_like_ic_reject(text) or text.startswith("[icp error]"):
@@ -4759,6 +4815,7 @@ REPL COMMANDS
   %entities                Entity row counts from status()
   %get <remote> [local]    Download file from canister
   %put <local> [remote]    Upload file to canister
+  %raw [on|off]            Print exact canister strings (disable pretty-print)
   !<cmd>                   Run local OS command
   :q / exit                Quit the shell
   :help [topic]            Show help (topics listed below)""",
@@ -4955,6 +5012,7 @@ def run_watch(canister: str, network: str, inbox: str, outbox: str):
                     else canister_exec(code, canister, network)
                 )
 
+            result = _format_shell_result(result)
             if result and (
                 _looks_like_ic_reject(result) or result.startswith("[icp error]")
             ):
@@ -4991,6 +5049,11 @@ def main():
         action="store_true",
         help="On IC reject: also print principal, inner trap, and backtrace",
     )
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Print exact canister strings (disable JSON pretty-print)",
+    )
     parser.add_argument("-c", dest="code", default=None, help="Execute code string")
     parser.add_argument(
         "--watch",
@@ -5012,9 +5075,10 @@ def main():
 
     args = parser.parse_args()
 
-    global _IDENTITY, _VERBOSE
+    global _IDENTITY, _VERBOSE, _RAW_OUTPUT
     _IDENTITY = args.identity
     _VERBOSE = bool(args.verbose)
+    _RAW_OUTPUT = bool(args.raw)
 
     if args.watch:
         run_watch(args.canister, args.network, args.watch, args.outbox)
