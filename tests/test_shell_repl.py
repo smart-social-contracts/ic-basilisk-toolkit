@@ -1,13 +1,17 @@
 """Unit tests for shell REPL UX helpers (no live canister)."""
 
+import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import ic_basilisk_toolkit.shell as shell
 from ic_basilisk_toolkit.shell import (
     _format_exec_error,
     _format_repl_error,
+    _format_shell_result,
+    _handle_magic,
     _print_output,
     _repl_prompt,
     _repl_prompt_label,
@@ -155,3 +159,57 @@ class TestIcRejectUnwrap:
 
     def test_already_unwrapped_host_line_is_unchanged(self):
         assert _format_exec_error(_HOST_DENIED, verbose=False) == _HOST_DENIED
+
+
+class TestShellResultPrettyPrint:
+    """Local pretty-print of __shell__ results (issue #13). Never runs on-canister."""
+
+    def setup_method(self):
+        self._prev_raw = shell._RAW_OUTPUT
+        shell._RAW_OUTPUT = False
+
+    def teardown_method(self):
+        shell._RAW_OUTPUT = self._prev_raw
+
+    def test_json_object(self):
+        out = _format_shell_result('{"a":1,"b":[2,3]}')
+        assert out == json.dumps({"a": 1, "b": [2, 3]}, indent=2, ensure_ascii=False)
+        assert "\n" in out
+
+    def test_json_in_a_string(self):
+        payload = json.dumps(json.dumps({"ok": True, "name": "café"}))
+        out = _format_shell_result(payload)
+        assert out == json.dumps(
+            {"ok": True, "name": "café"}, indent=2, ensure_ascii=False
+        )
+        assert "café" in out
+
+    def test_non_json_printed_as_is(self):
+        assert _format_shell_result("hello world") == "hello world"
+        assert _format_shell_result("not {json") == "not {json"
+        assert _format_shell_result("True") == "True"
+
+    def test_raw_flag_keeps_exact_canister_string(self):
+        compact = '{"a":1,"b":[2,3]}'
+        assert _format_shell_result(compact, raw=True) == compact
+        encoded = json.dumps(json.dumps({"ok": True}))
+        assert _format_shell_result(encoded, raw=True) == encoded
+
+    def test_print_output_pretty_prints_json(self, capsys):
+        _print_output('{"a":1}')
+        captured = capsys.readouterr()
+        assert captured.out == '{\n  "a": 1\n}\n'
+
+    def test_print_output_raw_keeps_exact_string(self, capsys):
+        shell._RAW_OUTPUT = True
+        _print_output('{"a":1}')
+        captured = capsys.readouterr()
+        assert captured.out == '{"a":1}\n'
+
+    def test_raw_magic_toggles_session_flag(self):
+        assert _handle_magic("%raw on", "dummy", "dummy") == "raw output on"
+        assert shell._RAW_OUTPUT is True
+        assert _format_shell_result('{"a":1}') == '{"a":1}'
+        assert _handle_magic("%raw off", "dummy", "dummy") == "raw output off"
+        assert shell._RAW_OUTPUT is False
+        assert _format_shell_result('{"a":1}') == '{\n  "a": 1\n}'
