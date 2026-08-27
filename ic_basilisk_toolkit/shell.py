@@ -10,6 +10,7 @@ Usage:
     basilisk shell --canister <id> [--network <net>] -c "code" One-shot mode
     basilisk shell --canister <id> [--network <net>] script.py  File mode
     echo "print(42)" | basilisk shell --canister <id>           Pipe mode
+    basilisk shell --canister <id> --verbose                   Show principal / trap / backtrace
 
 Shell commands:
     %ls [path]    List canister filesystem
@@ -139,6 +140,173 @@ def _format_repl_error(text: str) -> str:
     return _format_sandbox_error(text)
 
 
+# Replica / icp-cli wrappers around a canister trap (realms#349).
+# Do not treat a formatted backtrace as a reject — --verbose reprints those.
+_IC_REJECT_MARKERS = (
+    "direct update call failed",
+    "the replica returned a rejection error",
+    "ic0.trap",
+)
+_TRAP_MESSAGE_RE = re.compile(
+    r"`?ic0\.trap`?\s+with message:\s*(.*?)(?:\n\s*Canister Backtrace:|\n\s*error code\b|, error code\b|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+_BACKTRACE_RE = re.compile(
+    r"Canister Backtrace:\s*\n(.*?)(?:\n\s*,?\s*error code\b|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+_ACCESS_DENIED_LINE_RE = re.compile(r"✗\s+access denied:\s+\S.*", re.IGNORECASE)
+_LACKS_PERMISSION_RE = re.compile(
+    r"AccessDenied:\s*lacks permission\s+'([^']+)'",
+    re.IGNORECASE,
+)
+_PRINCIPAL_LABEL_RE = re.compile(
+    r"(?:principal|caller)\s*[:=]\s*([a-z0-9][a-z0-9\-]+)",
+    re.IGNORECASE,
+)
+_PRINCIPAL_SUFFIX_RE = re.compile(
+    r"\s*[\(\[]?\s*(?:principal|caller)\s*[:=]\s*[a-z0-9][a-z0-9\-]+[\)\]]?\s*$",
+    re.IGNORECASE,
+)
+_ERROR_FROM_CANISTER_RE = re.compile(
+    r"Error from Canister\s+([a-z0-9\-]+)",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_ic_reject(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in _IC_REJECT_MARKERS)
+
+
+def _strip_icp_error_prefix(text: str) -> str:
+    text = (text or "").strip()
+    if text.startswith("[icp error]"):
+        return text[len("[icp error]") :].strip()
+    return text
+
+
+def _strip_matching_quotes(text: str) -> str:
+    """Remove one matching outer quote pair only (keep api.call('…') intact)."""
+    text = (text or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    return text
+
+
+def _first_nonempty_line(text: str) -> str:
+    for line in (text or "").splitlines():
+        stripped = _strip_matching_quotes(line.strip())
+        if stripped:
+            return stripped
+    return (text or "").strip()
+
+
+def _host_line_from_trap(trap: str) -> str:
+    """Pass through the host's exact one-line denial (permission + causing call)."""
+    trap = _strip_matching_quotes(trap or "")
+    if not trap:
+        return ""
+    denied = _ACCESS_DENIED_LINE_RE.search(trap)
+    if denied:
+        return _PRINCIPAL_SUFFIX_RE.sub("", denied.group(0).strip()).strip()
+    lacks = _LACKS_PERMISSION_RE.search(trap)
+    if lacks:
+        return f"✗ access denied: {lacks.group(1)}"
+    first = _first_nonempty_line(trap)
+    if first.lower().startswith("accessdenied"):
+        rest = first.split(":", 1)[-1].strip()
+        rest = re.sub(r"^lacks permission\s+", "", rest, flags=re.IGNORECASE)
+        rest = _strip_matching_quotes(rest)
+        if rest:
+            return f"✗ access denied: {rest}"
+    return first
+
+
+def _extract_principal(text: str) -> str | None:
+    """Caller principal if the host/trap named one (not the target canister)."""
+    skip = set()
+    canister = _ERROR_FROM_CANISTER_RE.search(text or "")
+    if canister:
+        skip.add(canister.group(1))
+    labeled = _PRINCIPAL_LABEL_RE.search(text or "")
+    if labeled and labeled.group(1) not in skip:
+        return labeled.group(1)
+    return None
+
+
+def _unwrap_ic_reject(text: str) -> dict | None:
+    """Unwrap an IC replica / icp-cli reject to the inner host trap.
+
+    Returns None when *text* is not an IC reject wrapper. Keys:
+    host_message, principal, inner_trap, backtrace.
+    """
+    raw = _strip_icp_error_prefix(text)
+    if not raw or not _looks_like_ic_reject(raw):
+        return None
+
+    backtrace = None
+    bt = _BACKTRACE_RE.search(raw)
+    if bt:
+        backtrace = bt.group(1).strip() or None
+
+    inner_trap = None
+    trap = _TRAP_MESSAGE_RE.search(raw)
+    if trap:
+        inner_trap = _strip_matching_quotes(trap.group(1).strip()) or None
+
+    host_message = _host_line_from_trap(inner_trap or "")
+    if not host_message:
+        denied = _ACCESS_DENIED_LINE_RE.search(raw)
+        if denied:
+            host_message = denied.group(0).strip()
+        else:
+            lacks = _LACKS_PERMISSION_RE.search(raw)
+            if lacks:
+                host_message = f"✗ access denied: {lacks.group(1)}"
+            else:
+                host_message = _first_nonempty_line(inner_trap or raw)
+
+    principal = _extract_principal((inner_trap or "") + "\n" + raw)
+    return {
+        "host_message": host_message,
+        "principal": principal,
+        "inner_trap": inner_trap,
+        "backtrace": backtrace,
+    }
+
+
+def _format_ic_reject(unwrapped: dict, *, verbose: bool = False) -> str:
+    """Default: the host's exact ✗ line. --verbose adds principal, trap, backtrace."""
+    line = unwrapped["host_message"]
+    # Host denials already include permission + causing call — do not rewrite.
+    if not line.startswith("✗"):
+        line = _format_repl_error(line)
+    if not verbose:
+        return line
+    parts = [line]
+    principal = unwrapped.get("principal")
+    if principal:
+        parts.append(f"principal: {principal}")
+    inner_trap = unwrapped.get("inner_trap")
+    if inner_trap:
+        parts.append(f"trap: {inner_trap}")
+    backtrace = unwrapped.get("backtrace")
+    if backtrace:
+        parts.append(f"Canister Backtrace:\n{backtrace}")
+    return "\n".join(parts)
+
+
+def _format_exec_error(text: str, *, verbose: bool | None = None) -> str:
+    """Format a canister_exec / print-path error, unwrapping IC rejects."""
+    if verbose is None:
+        verbose = bool(_VERBOSE)
+    unwrapped = _unwrap_ic_reject(text)
+    if unwrapped:
+        return _format_ic_reject(unwrapped, verbose=verbose)
+    return _format_repl_error(_strip_icp_error_prefix(text) or text)
+
+
 def _is_transient_dfx_error(stderr: str) -> bool:
     s = (stderr or "").lower()
     transient_markers = [
@@ -160,6 +328,9 @@ def _is_transient_dfx_error(stderr: str) -> bool:
 
 # Identity override — set by --identity flag
 _IDENTITY = None
+
+# --verbose: keep IC trap / principal / backtrace on reject
+_VERBOSE = False
 
 
 def _net_flags(canister: str, network: str = None) -> list[str]:
@@ -235,7 +406,7 @@ def canister_exec(code: str, canister: str, network: str = None) -> str:
     try:
         r = _run_dfx_with_retries(cmd, timeout_s=120)
         if r.returncode != 0:
-            return f"[icp error] {r.stderr.strip()}"
+            return _format_exec_error(r.stderr.strip() or r.stdout.strip())
         return _parse_candid(r.stdout)
     except subprocess.TimeoutExpired:
         return "[error] canister call timed out (120s)"
@@ -4431,14 +4602,15 @@ def _print_output(text: str):
     if text:
         text = text.rstrip()
         if text:
-            if any(
+            if _looks_like_ic_reject(text) or text.startswith("[icp error]"):
+                text = _format_exec_error(text)
+            elif any(
                 marker in text
                 for marker in (
                     "sandboxed call raised:",
                     "denied by policy",
                     "access denied",
                     "✗ ",
-                    "[icp error]",
                     "[error]",
                 )
             ):
@@ -4783,6 +4955,11 @@ def run_watch(canister: str, network: str, inbox: str, outbox: str):
                     else canister_exec(code, canister, network)
                 )
 
+            if result and (
+                _looks_like_ic_reject(result) or result.startswith("[icp error]")
+            ):
+                result = _format_exec_error(result)
+
             with open(outbox, "w") as f:
                 if result and result.strip():
                     f.write(result.rstrip() + "\n")
@@ -4808,6 +4985,12 @@ def main():
     parser.add_argument("--canister", required=True, help="Canister name or ID")
     parser.add_argument("--network", default=None, help="Network: local, ic, or URL")
     parser.add_argument("--identity", default=None, help="icp identity to use")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="On IC reject: also print principal, inner trap, and backtrace",
+    )
     parser.add_argument("-c", dest="code", default=None, help="Execute code string")
     parser.add_argument(
         "--watch",
@@ -4829,8 +5012,9 @@ def main():
 
     args = parser.parse_args()
 
-    global _IDENTITY
+    global _IDENTITY, _VERBOSE
     _IDENTITY = args.identity
+    _VERBOSE = bool(args.verbose)
 
     if args.watch:
         run_watch(args.canister, args.network, args.watch, args.outbox)
