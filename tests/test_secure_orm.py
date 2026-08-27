@@ -480,6 +480,15 @@ class TestReplErrors:
         assert out.startswith("✗")
         assert "access denied" in out.lower()
 
+    def test_format_sandbox_error_keeps_host_denied_line(self):
+        from ic_basilisk_toolkit.secure_orm import _format_sandbox_error
+
+        raw = (
+            "✗ access denied: Host.set_canister_config "
+            "from api.call('set_canister_config')"
+        )
+        assert _format_sandbox_error(raw) == raw
+
     def test_rpc_deny_message_includes_entity_and_id(self):
         from ic_basilisk_toolkit.secure_orm import _rpc_deny_message
 

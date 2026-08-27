@@ -75,6 +75,8 @@ def _format_sandbox_error(message: str) -> str:
         if "entity." in msg:
             action = msg.strip("'")
             msg = f"access denied: {action} (not authorized for your principal)"
+    if msg.startswith("✗"):
+        return msg
     if msg.lower().startswith("access denied") or " denied" in msg:
         return f"✗ {msg}"
     return msg
