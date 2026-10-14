@@ -1,28 +1,31 @@
-name: Publish to PyPI
+# Cut a release: bump the version, build, tag, and attach the wheel, sdist and
+# checksums.txt to a draft release. It is published (and only then uploaded to
+# PyPI, by release-verify.yml) after checksums.txt is signed with the release
+# key: smart-social-contracts/.github scripts/sign-release.sh.
+name: Release
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (e.g. 0.2.0). Leave empty to publish current version.'
+        description: 'Version to release (e.g. 0.6.0). Leave empty to use the bump level.'
         required: false
         type: string
       bump:
-        description: 'Or pick a bump level (ignored if version is set)'
+        description: 'Bump level (ignored if version is set)'
         required: false
         type: choice
-        default: 'none'
+        default: 'patch'
         options:
-          - none
           - patch
           - minor
           - major
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -35,23 +38,20 @@ jobs:
       - name: Install build dependencies
         run: pip install build twine setuptools wheel bump2version
 
-      - name: Bump version (if requested)
-        if: github.event_name == 'workflow_dispatch' && (inputs.version != '' || inputs.bump != 'none')
+      - name: Bump version
+        id: bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "${{ inputs.version }}" ]; then
-            # Explicit version: update all files directly
             OLD_VERSION=$(grep 'current_version' .bumpversion.cfg | head -1 | cut -d= -f2 | tr -d ' ')
             sed -i "s/$OLD_VERSION/${{ inputs.version }}/g" setup.py pyproject.toml ic_basilisk_toolkit/__init__.py .bumpversion.cfg
-            echo "Version set to ${{ inputs.version }}"
           else
-            # Bump by level
             bump2version ${{ inputs.bump }} --no-commit --no-tag
-            echo "Bumped version (${{ inputs.bump }})"
           fi
           NEW_VERSION=$(grep 'current_version' .bumpversion.cfg | head -1 | cut -d= -f2 | tr -d ' ')
-          echo "Publishing version: $NEW_VERSION"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $NEW_VERSION"
 
       - name: Verify version consistency
         run: |
@@ -70,8 +70,22 @@ jobs:
       - name: Check package
         run: twine check dist/*
 
-      - name: Upload to PyPI
+      - name: Commit and tag
         env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/* --skip-existing
+          TAG: v${{ steps.bump.outputs.version }}
+        run: |
+          git add setup.py pyproject.toml ic_basilisk_toolkit/__init__.py .bumpversion.cfg
+          git commit -m "Bump version to ${TAG#v}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin HEAD:main "$TAG"
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.bump.outputs.version }}
+        run: |
+          cd dist
+          { echo "# SHA-256 checksums for release assets"; sha256sum *; } > ../checksums.txt
+          mv ../checksums.txt .
+          cat checksums.txt
+          gh release create "$TAG" --draft --title "$TAG" --generate-notes *
