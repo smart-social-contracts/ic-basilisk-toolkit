@@ -7,11 +7,7 @@ Commands:
   exec <code>      Execute Python code on a deployed canister
   shell            Interactive Python shell on a deployed canister
   sshd             Start an SSH/SFTP server proxy to a canister
-  deploy           Deploy a new basilisk canister from the on-chain deployer
-  upgrade          Upgrade an existing canister to a new WASM version
   check-upgrade    Check schema compatibility before upgrading
-  versions         List available WASM versions on the deployer
-  deployments      List deployment history
 
 Options (exec, shell, sshd):
   --canister <id>   Canister name or principal ID  [auto-detect from icp.yaml]
@@ -213,30 +209,10 @@ def main():
         sys.argv = ["basilisk-toolkit-sshd"] + sys.argv[2:]
         sshd_main()
 
-    elif command == "deploy":
-        from ic_basilisk_toolkit.deployer import cmd_deploy
-
-        cmd_deploy(sys.argv[2:])
-
-    elif command == "upgrade":
-        from ic_basilisk_toolkit.deployer import cmd_upgrade
-
-        cmd_upgrade(sys.argv[2:])
-
     elif command == "check-upgrade":
         from ic_basilisk_toolkit.check_upgrade import cmd_check_upgrade
 
         cmd_check_upgrade(sys.argv[2:])
-
-    elif command == "versions":
-        from ic_basilisk_toolkit.deployer import cmd_versions
-
-        cmd_versions(sys.argv[2:])
-
-    elif command == "deployments":
-        from ic_basilisk_toolkit.deployer import cmd_deployments
-
-        cmd_deployments(sys.argv[2:])
 
     elif command in ("-h", "--help", "help"):
         print(__doc__.strip())
@@ -282,39 +258,11 @@ def plugin_sshd():
     sshd_main()
 
 
-def plugin_deploy():
-    """basilisk deploy — Deploy a new basilisk canister."""
-    from ic_basilisk_toolkit.deployer import cmd_deploy
-
-    cmd_deploy(sys.argv[2:])
-
-
-def plugin_upgrade():
-    """basilisk upgrade — Upgrade an existing canister."""
-    from ic_basilisk_toolkit.deployer import cmd_upgrade
-
-    cmd_upgrade(sys.argv[2:])
-
-
 def plugin_check_upgrade():
     """basilisk check-upgrade — Check schema compatibility before upgrading."""
     from ic_basilisk_toolkit.check_upgrade import cmd_check_upgrade
 
     cmd_check_upgrade(sys.argv[2:])
-
-
-def plugin_versions():
-    """basilisk versions — List available WASM versions."""
-    from ic_basilisk_toolkit.deployer import cmd_versions
-
-    cmd_versions(sys.argv[2:])
-
-
-def plugin_deployments():
-    """basilisk deployments — List deployment history."""
-    from ic_basilisk_toolkit.deployer import cmd_deployments
-
-    cmd_deployments(sys.argv[2:])
 
 
 if __name__ == "__main__":
