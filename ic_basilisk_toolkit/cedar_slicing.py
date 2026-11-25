@@ -131,9 +131,7 @@ class Slicer:
             return None
         return (type_name, related_id, value)
 
-    def _attrs(
-        self, row: Any, declared: Optional[frozenset] = None
-    ) -> Dict[str, Any]:
+    def _attrs(self, row: Any, declared: Optional[frozenset] = None) -> Dict[str, Any]:
         """Project scalar fields and single-valued references from a row."""
         out: Dict[str, Any] = {}
         for name in dir(row):
@@ -276,7 +274,5 @@ class Slicer:
     ) -> List[Dict[str, Any]]:
         """The complete entity store for one decision."""
         entities = self.principal_entity(principal_id, principal_parents, principal_row)
-        entities.extend(
-            self.resource_entity(resource_type, resource_id, resource_row)
-        )
+        entities.extend(self.resource_entity(resource_type, resource_id, resource_row))
         return entities

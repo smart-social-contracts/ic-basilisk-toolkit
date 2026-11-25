@@ -171,9 +171,7 @@ class CedarEngine:
                 resource_type, resource_id if resource_id else "_"
             )
         else:
-            resource = (
-                f'{self.namespace}::{self.namespace}::"{self.namespace.lower()}"'
-            )
+            resource = f'{self.namespace}::{self.namespace}::"{self.namespace.lower()}"'
 
         if context is None:
             merged = self.context_provider() if self.context_provider else None

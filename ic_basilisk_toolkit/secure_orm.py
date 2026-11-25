@@ -71,7 +71,9 @@ def _format_sandbox_error(message: str) -> str:
         if msg.startswith(prefix):
             msg = msg[len(prefix) :].strip()
     if "denied by policy" in msg and not msg.lower().startswith("access denied"):
-        msg = msg.replace("' denied by policy", " denied").replace("denied by policy", "denied")
+        msg = msg.replace("' denied by policy", " denied").replace(
+            "denied by policy", "denied"
+        )
         if "entity." in msg:
             action = msg.strip("'")
             msg = f"access denied: {action} (not authorized for your principal)"
@@ -96,6 +98,8 @@ def _rpc_deny_message(action: str, kwargs: dict, exc: PermissionError) -> str:
             f"(not authorized for your principal)"
         )
     return f"access denied: {op} on {entity_label} ({exc})"
+
+
 _SCALAR_TYPES = frozenset({"String", "Integer", "Boolean"})
 
 
@@ -149,14 +153,11 @@ def generate_default_policies(
         cls = by_name.get(entity_name)
         owner_field = getattr(cls, "__owner_field__", "owner") if cls else "owner"
 
-        if (
-            owner_field in fields
-            and fields[owner_field].get("type") == "String"
-        ):
+        if owner_field in fields and fields[owner_field].get("type") == "String":
             lines.append(
                 f"// Type-level list permit: upfront _list checks use typed placeholder "
                 f'Ns::Type::"_" (no row attrs); row filtering still applies per row.\n'
-                f"permit (principal, action == {namespace}::Action::\"entity.list\", "
+                f'permit (principal, action == {namespace}::Action::"entity.list", '
                 f'resource == {namespace}::{entity_name}::"_");'
             )
             lines.append(
@@ -188,7 +189,7 @@ def generate_default_policies(
                 lines.append(
                     f"// Type-level list permit: upfront _list checks use typed placeholder "
                     f'Ns::Type::"_" (no row attrs); row filtering still applies per row.\n'
-                    f"permit (principal, action == {namespace}::Action::\"entity.list\", "
+                    f'permit (principal, action == {namespace}::Action::"entity.list", '
                     f'resource == {namespace}::{entity_name}::"_");'
                 )
                 lines.append(
@@ -229,7 +230,7 @@ def _generate_stub_source(
             "",
             "    @classmethod",
             "    def _wrap(cls, d):",
-            '        obj = cls.__new__(cls)',
+            "        obj = cls.__new__(cls)",
             '        object.__setattr__(obj, "_data", dict(d))',
             "        return obj",
             "",
@@ -286,10 +287,9 @@ def _generate_stub_source(
             filter_kw = f"{rel_name}_id"
             child_rels = schema.get(child_name, {}).get("relationships", {})
             for child_rel, child_desc in sorted(child_rels.items()):
-                if (
-                    child_desc.get("type") == "ManyToOne"
-                    and _relation_targets(child_desc) == [name]
-                ):
+                if child_desc.get("type") == "ManyToOne" and _relation_targets(
+                    child_desc
+                ) == [name]:
                     filter_kw = f"{child_rel}_id"
                     break
             methods.extend(
@@ -310,7 +310,7 @@ def _generate_stub_source(
         for cls in sorted_entities
     )
 
-    return f'''
+    return f"""
 class _Stub:
     @staticmethod
     def _rpc_kwargs(kw):
@@ -446,7 +446,7 @@ def eval_repl(code):
     if use_eval and result is not None:
         out += repr(result) + "\\n"
     return out
-'''
+"""
 
 
 def setup_secure_orm(
@@ -662,11 +662,16 @@ class SecureORM:
             resolved[rel_name] = self._load_row(target_cls, related_id)
         return resolved
 
-    def _create(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> dict:
+    def _create(
+        self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]
+    ) -> dict:
         kwargs = dict(kwargs or {})
         kwargs.pop("id", None)
         self.engine.check(
-            principal_id, "entity.create", cls.__name__, "new",
+            principal_id,
+            "entity.create",
+            cls.__name__,
+            "new",
             context=self._shell_context,
         )
 
@@ -706,9 +711,7 @@ class SecureORM:
             if principal_row is None and hasattr(principal_cls, "load"):
                 principal_row = principal_cls.load(principal_id)
             if principal_row is None:
-                raise RpcError(
-                    f"{self.engine.principal_type} {principal_id} not found"
-                )
+                raise RpcError(f"{self.engine.principal_type} {principal_id} not found")
             relation_kwargs[owner_field] = principal_row
 
         # Creating a child row mutates the parent's content, so every resolved
@@ -775,12 +778,18 @@ class SecureORM:
             row
             for row in filtered
             if self.engine.is_authorized(
-                principal_id, "entity.list", cls.__name__, row._id, row,
+                principal_id,
+                "entity.list",
+                cls.__name__,
+                row._id,
+                row,
                 context=self._shell_context,
             )
         ]
 
-    def _list(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> list:
+    def _list(
+        self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]
+    ) -> list:
         kwargs = dict(kwargs or {})
         # Authorize list even when the table is empty — forbidden types must
         # not appear to succeed with an empty result.
@@ -805,26 +814,40 @@ class SecureORM:
             rows = rows[:count]
         return [self._row_dict(cls, row) for row in rows]
 
-    def _count(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> int:
+    def _count(
+        self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]
+    ) -> int:
         return len(self._visible_rows(cls, principal_id, kwargs or {}))
 
-    def _get(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> Optional[dict]:
+    def _get(
+        self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]
+    ) -> Optional[dict]:
         row_id = str(kwargs.get("id", ""))
         row = cls.load(row_id)
         if row is None:
             return None
         self.engine.check(
-            principal_id, "entity.get", cls.__name__, row_id, row,
+            principal_id,
+            "entity.get",
+            cls.__name__,
+            row_id,
+            row,
             context=self._shell_context,
         )
         return self._row_dict(cls, row)
 
-    def _update(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> dict:
+    def _update(
+        self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]
+    ) -> dict:
         kwargs = dict(kwargs or {})
         row_id = str(kwargs.pop("id", ""))
         row = self._load_row(cls, row_id)
         self.engine.check(
-            principal_id, "entity.update", cls.__name__, row_id, row,
+            principal_id,
+            "entity.update",
+            cls.__name__,
+            row_id,
+            row,
             context=self._shell_context,
         )
 
@@ -842,11 +865,17 @@ class SecureORM:
                 continue
         return self._row_dict(cls, row)
 
-    def _delete(self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]) -> dict:
+    def _delete(
+        self, cls: Type[SecureEntity], principal_id: str, kwargs: Dict[str, Any]
+    ) -> dict:
         row_id = str(kwargs.get("id", ""))
         row = self._load_row(cls, row_id)
         self.engine.check(
-            principal_id, "entity.delete", cls.__name__, row_id, row,
+            principal_id,
+            "entity.delete",
+            cls.__name__,
+            row_id,
+            row,
             context=self._shell_context,
         )
         # Cascade to OneToMany children: they are owned through this row, so the
