@@ -218,6 +218,18 @@ class TaskExecution(Entity, TimestampedMixin):
         )
 
 
+def new_execution_name() -> str:
+    """The name of the next TaskExecution: ``taskexec_<id>``, after the id its
+    constructor is about to take.
+
+    The name is the alias, so it must be unique. Executions were named
+    ``taskexec_<task id>_<task id>`` (and by the shell ``taskexec_<task id>_<step>``),
+    the same for every run of a task. A name of one number never equals one of
+    those.
+    """
+    return "taskexec_%s" % (TaskExecution.max_id() + 1)
+
+
 # ---------------------------------------------------------------------------
 # TaskStep — single step in a multi-step workflow
 # ---------------------------------------------------------------------------
@@ -305,9 +317,8 @@ class Task(Entity, TimestampedMixin):
     executions = OneToMany("TaskExecution", "task")
 
     def new_task_execution(self) -> TaskExecution:
-        execution_name = "taskexec_%s_%s" % (self._id, self._id)
         execution = TaskExecution(
-            name=execution_name,
+            name=new_execution_name(),
             task=self,
             status=TaskExecutionStatus.IDLE,
             result="",
