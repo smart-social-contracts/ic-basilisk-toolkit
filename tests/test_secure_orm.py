@@ -15,6 +15,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from ic_python_db import Boolean, Database, ManyToOne, MemoryStorage, OneToMany, String
+
 from ic_basilisk_toolkit import cedar
 from ic_basilisk_toolkit.secure_orm import (
     RpcError,
@@ -22,7 +24,6 @@ from ic_basilisk_toolkit.secure_orm import (
     generate_default_policies,
     setup_secure_orm,
 )
-from ic_python_db import Boolean, Database, ManyToOne, MemoryStorage, OneToMany, String
 
 Database.init(db_storage=MemoryStorage(), audit_enabled=False)
 
@@ -118,7 +119,10 @@ class TestPolicyGeneration:
         schema = _build_schema_dict()
         policies = generate_default_policies(schema, "TodoApp", [TodoList, TodoItem])
         assert "resource is TodoApp::TodoList" in policies
-        assert "resource has owner && principal has id && resource.owner == principal.id" in policies
+        assert (
+            "resource has owner && principal has id && resource.owner == principal.id"
+            in policies
+        )
 
     def test_owner_field_entity_gets_type_level_list_permit(self):
         schema = _build_schema_dict()
@@ -152,7 +156,7 @@ class TestPolicyGeneration:
         assert policies.count('action == TodoApp::Action::"entity.list"') == 2
         assert 'resource == TodoApp::TodoList::"_"' in policies
         assert 'resource == TodoApp::TodoItem::"_"' in policies
-        assert 'resource is TodoApp::TodoList);' not in policies
+        assert "resource is TodoApp::TodoList);" not in policies
         assert 'action == TodoApp::Action::"entity.get"' not in policies
         assert 'action == TodoApp::Action::"entity.update"' not in policies
         assert 'action == TodoApp::Action::"entity.delete"' not in policies
@@ -220,7 +224,9 @@ class TestHandleRpc:
         created = orm.handle_rpc("alice", "todo_list.create", {"title": "A"})
         fake_cedar.reply = {"decision": "deny"}
         with pytest.raises(PermissionError, match="denied"):
-            orm.handle_rpc("bob", "todo_list.update", {"id": created["id"], "title": "X"})
+            orm.handle_rpc(
+                "bob", "todo_list.update", {"id": created["id"], "title": "X"}
+            )
 
     def test_list_filters_denied_rows(self, fake_cedar, monkeypatch):
         orm = _make_orm(fake_cedar)
@@ -229,7 +235,15 @@ class TestHandleRpc:
 
         allowed_ids = {first["id"]}
 
-        def fake_is_authorized(principal_id, action, resource_type="", resource_id="", resource_row=None, entities=None, context=None):
+        def fake_is_authorized(
+            principal_id,
+            action,
+            resource_type="",
+            resource_id="",
+            resource_row=None,
+            entities=None,
+            context=None,
+        ):
             # Upfront type-level list check uses empty id / typed placeholder.
             if action == "entity.list" and resource_id in ("", "_"):
                 return True
@@ -270,8 +284,12 @@ class TestHandleRpc:
     def test_list_relation_filter_still_works(self, fake_cedar):
         orm = _make_orm(fake_cedar)
         lst = orm.handle_rpc("alice", "todo_list.create", {"title": "L"})
-        orm.handle_rpc("alice", "todo_item.create", {"title": "i1", "todo_list_id": lst["id"]})
-        orm.handle_rpc("alice", "todo_item.create", {"title": "i2", "todo_list_id": lst["id"]})
+        orm.handle_rpc(
+            "alice", "todo_item.create", {"title": "i1", "todo_list_id": lst["id"]}
+        )
+        orm.handle_rpc(
+            "alice", "todo_item.create", {"title": "i2", "todo_list_id": lst["id"]}
+        )
         rows = orm.handle_rpc("alice", "todo_item.list", {"todo_list_id": lst["id"]})
         assert len(rows) == 2
         rows = orm.handle_rpc("alice", "todo_item.list", {"todo_list_id": "999"})
@@ -285,7 +303,15 @@ class TestHandleRpc:
         assert orm.handle_rpc("alice", "todo_list.count", {}) == 2
         assert orm.handle_rpc("alice", "todo_list.count", {"title": "A"}) == 1
 
-        def fake_is_authorized(principal_id, action, resource_type="", resource_id="", resource_row=None, entities=None, context=None):
+        def fake_is_authorized(
+            principal_id,
+            action,
+            resource_type="",
+            resource_id="",
+            resource_row=None,
+            entities=None,
+            context=None,
+        ):
             return resource_id == first["id"]
 
         monkeypatch.setattr(orm.engine, "is_authorized", fake_is_authorized)
@@ -343,7 +369,11 @@ class TestStubBehavior:
             if action == "orm.create" and entity == "TodoList":
                 return {"id": "2", "title": kwargs.get("title", ""), "owner": "alice"}
             if action == "orm.update" and entity == "TodoList":
-                return {"id": kwargs["id"], "title": kwargs.get("title", "T"), "owner": "alice"}
+                return {
+                    "id": kwargs["id"],
+                    "title": kwargs.get("title", "T"),
+                    "owner": "alice",
+                }
             if action == "orm.get" and entity == "TodoList":
                 if kwargs["id"] == "999":
                     return None
@@ -472,10 +502,7 @@ class TestReplErrors:
     def test_format_sandbox_error_strips_nesting(self):
         from ic_basilisk_toolkit.secure_orm import _format_sandbox_error
 
-        raw = (
-            "sandboxed call raised: PermissionError: "
-            "'entity.get' denied by policy"
-        )
+        raw = "sandboxed call raised: PermissionError: " "'entity.get' denied by policy"
         out = _format_sandbox_error(raw)
         assert out.startswith("✗")
         assert "access denied" in out.lower()
@@ -510,7 +537,9 @@ class TestCedarIntrospection:
         assert "base_policies" in out
         assert "extra_policies" in out
         assert "policies" in out
-        assert "TodoApp::TodoList" in out["policies"] or "entity.create" in out["policies"]
+        assert (
+            "TodoApp::TodoList" in out["policies"] or "entity.create" in out["policies"]
+        )
 
     def test_cedar_snapshot_default(self, fake_cedar):
         orm = _make_orm(fake_cedar)
@@ -530,7 +559,7 @@ class TestCedarIntrospection:
 
     def test_reload_policies_updates_extra(self, fake_cedar):
         orm = _make_orm(fake_cedar)
-        extra = '// custom\npermit(principal, action, resource);'
+        extra = "// custom\npermit(principal, action, resource);"
         out = orm.reload_policies(extra)
         assert out["ok"] is True
         assert out["extra_policies"] == extra
@@ -539,7 +568,9 @@ class TestCedarIntrospection:
 
 class TestModuleImport:
     def test_import_without_native_modules(self, monkeypatch):
-        monkeypatch.delitem(sys.modules, "ic_basilisk_toolkit.secure_orm", raising=False)
+        monkeypatch.delitem(
+            sys.modules, "ic_basilisk_toolkit.secure_orm", raising=False
+        )
         monkeypatch.setitem(sys.modules, "ic_basilisk_toolkit.cedar_engine", None)
         # Re-import path: secure_orm uses try/except at import time; verify symbols exist.
         from ic_basilisk_toolkit import secure_orm as mod
@@ -554,9 +585,15 @@ class TestSetupSchemaPassThrough:
             [TodoList, TodoItem],
             "TodoApp",
             principal_entity=User,
-            actions={"read": "read", "write": "write", "entity.create": "write",
-                     "entity.get": "read", "entity.list": "read",
-                     "entity.update": "write", "entity.delete": "write"},
+            actions={
+                "read": "read",
+                "write": "write",
+                "entity.create": "write",
+                "entity.get": "read",
+                "entity.list": "read",
+                "entity.update": "write",
+                "entity.delete": "write",
+            },
             context={"extension": "String", "repl": "Bool"},
         )
         schema = orm.engine.schema

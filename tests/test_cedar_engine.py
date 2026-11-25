@@ -118,7 +118,7 @@ class TestLoad:
     def test_load_tracks_extra_policies(self, engine, fake, monkeypatch):
         monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
         module = fake({"ok": True, "warnings": []})
-        extra = 'permit(principal, action, resource);'
+        extra = "permit(principal, action, resource);"
         assert engine.load(extra) is True
         assert engine.extra_policies() == extra
         assert extra in engine.effective_policies()
@@ -140,6 +140,7 @@ class TestPolicySnapshot:
         assert snap["extra_policies"].startswith("// extra")
         assert snap["has_extra_policies"] is True
         assert "permit(principal, action, resource);" in snap["policies"]
+
     def test_parses_action_names(self, engine):
         assert engine.declared_actions() == frozenset(
             {"read", "write", "entity.create", "entity.get", "entity.update"}
@@ -173,7 +174,9 @@ class TestIsAuthorized:
         assert any(e["uid"]["id"] == "1" for e in entities)
         assert args[4] == '{"source": "test"}'
 
-    def test_synthetic_resource_when_type_or_id_missing(self, engine, fake, monkeypatch):
+    def test_synthetic_resource_when_type_or_id_missing(
+        self, engine, fake, monkeypatch
+    ):
         monkeypatch.setitem(sys.modules, "_basilisk_cedar", object())
         module = fake({"ok": True, "warnings": []})
         engine.load()

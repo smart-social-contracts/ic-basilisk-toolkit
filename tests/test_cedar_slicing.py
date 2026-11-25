@@ -53,9 +53,7 @@ class TestUid:
 
 class TestSchemaParsing:
     def test_declared_types(self, slicer):
-        assert slicer.declared_types() == frozenset(
-            {"TodoItem", "TodoList", "User"}
-        )
+        assert slicer.declared_types() == frozenset({"TodoItem", "TodoList", "User"})
 
     def test_declared_attrs_for_todo_item(self, slicer):
         assert slicer.declared_attrs("TodoItem") == frozenset(
@@ -141,9 +139,7 @@ class TestRowEntityDepth:
         uids = {(e["uid"]["type"], e["uid"]["id"]) for e in entities}
         assert ("TodoApp::TodoItem", "1") in uids
         assert ("TodoApp::TodoList", "list-1") in uids
-        list_entity = next(
-            e for e in entities if e["uid"]["id"] == "list-1"
-        )
+        list_entity = next(e for e in entities if e["uid"]["id"] == "list-1")
         assert list_entity["attrs"] == {"owner": "alice", "title": "Chores"}
 
     def test_depth_zero_skips_related_entity(self, slicer):
