@@ -152,8 +152,9 @@ def _reraise_budget(exc):
     raise exc
 
 
-def spawn_sandboxed(source_code, content_hash, capability, rpc_handler,
-                    budget=DEFAULT_BUDGET):
+def spawn_sandboxed(
+    source_code, content_hash, capability, rpc_handler, budget=DEFAULT_BUDGET
+):
     """Spawn a subinterpreter running ``source_code`` under ``capability``.
 
     ``rpc_handler(context_id, action, kwargs) -> plain data`` runs in the
@@ -195,9 +196,7 @@ def call_sandboxed(handle, function_name, kwargs=None):
     if _basilisk_sandbox is None:
         raise RuntimeError("_basilisk_sandbox is not available here")
     try:
-        return _basilisk_sandbox.call_in_subinterpreter(
-            handle, function_name, kwargs
-        )
+        return _basilisk_sandbox.call_in_subinterpreter(handle, function_name, kwargs)
     except RuntimeError as exc:
         _reraise_budget(exc)
 
@@ -312,8 +311,7 @@ def _normalize_writes(result):
         for k in fields:
             if not isinstance(k, str):
                 raise ResultRejected(
-                    f"write #{i} (class '{w['cls']}') has a non-string "
-                    f"field name"
+                    f"write #{i} (class '{w['cls']}') has a non-string " f"field name"
                 )
     return writes
 
@@ -329,9 +327,7 @@ def _pass1_schema(writes, schemas):
 
         for name in fields:
             if name not in schema:
-                raise ResultRejected(
-                    f"unexpected field '{name}' for class '{cls}'"
-                )
+                raise ResultRejected(f"unexpected field '{name}' for class '{cls}'")
 
         for name, spec in schema.items():
             if spec.get("required") and name not in fields:
@@ -362,9 +358,7 @@ def _pass2_authorization(writes, capability, schemas, rules):
                 f"class '{cls}' is not in this capability's write scope"
             )
         if access != "read_write":
-            raise ResultRejected(
-                f"class '{cls}' is read-only in this capability"
-            )
+            raise ResultRejected(f"class '{cls}' is read-only in this capability")
 
         schema = schemas[cls]
         for name, value in w["fields"].items():
