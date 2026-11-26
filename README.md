@@ -52,7 +52,7 @@ w.list_transfers("ckBTC", limit=20)
 <tr><td colspan="2">
 
 ```shell
-%crypto encrypt "secret"
+%vetkey encrypt "secret"
 %group create team1
 %group add team1 <principal>
 ```

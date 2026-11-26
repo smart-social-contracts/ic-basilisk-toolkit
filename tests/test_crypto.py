@@ -17,12 +17,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from ic_basilisk_toolkit.shell import (
+    _CRYPTO_NOT_ENCRYPTED,
     _CRYPTO_USAGE,
     _GROUP_USAGE,
-    _crypto_decrypt_file_code,
-    _crypto_decrypt_text_code,
-    _crypto_encrypt_file_code,
-    _crypto_encrypt_text_code,
     _crypto_envelopes_code,
     _crypto_init_code,
     _crypto_revoke_group_code,
@@ -428,36 +425,43 @@ class TestCryptoCodeGeneration:
         assert "'admins'" in code
         compile(code, "<test>", "exec")
 
-    def test_encrypt_file_code_valid(self):
-        code = _crypto_encrypt_file_code("/data/secret.txt", "default")
-        assert "'/data/secret.txt'" in code
-        assert "encode_ciphertext" in code
-        compile(code, "<test>", "exec")
 
-    def test_decrypt_file_code_valid(self):
-        code = _crypto_decrypt_file_code("/data/secret.txt")
-        assert "'/data/secret.txt'" in code
-        assert "decode_ciphertext" in code
-        compile(code, "<test>", "exec")
+class TestCryptoEncryptIsRefused:
+    """%crypto encrypt, decrypt, encrypt-text and decrypt-text wrote the plaintext,
+    hex-encoded, as if it were a ciphertext (#19). They refuse, and reach no canister.
+    """
 
-    def test_encrypt_text_code_valid(self):
-        code = _crypto_encrypt_text_code("hello world", "default")
-        assert "'hello world'" in code
-        compile(code, "<test>", "exec")
+    @pytest.mark.parametrize(
+        "args",
+        [
+            "encrypt /data/secret.txt",
+            "encrypt /data/secret.txt --scope default",
+            "decrypt /data/secret.txt",
+            "encrypt-text a secret --scope default",
+            "decrypt-text enc:v=2:iv=aa:d=bb",
+            "encrypt",
+        ],
+    )
+    def test_refused_without_a_canister_call(self, args, monkeypatch):
+        import ic_basilisk_toolkit.shell as shell
 
-    def test_decrypt_text_code_valid(self):
-        code = _crypto_decrypt_text_code("enc:v=2:iv=aa:d=bb")
-        compile(code, "<test>", "exec")
+        def no_call(*a, **kw):
+            raise AssertionError("a refused %crypto command called the canister")
 
-    def test_escaping_single_quotes(self):
-        code = _crypto_encrypt_text_code("it's a secret", "default")
-        assert "it\\'s" in code
-        compile(code, "<test>", "exec")
+        monkeypatch.setattr(shell, "canister_exec", no_call)
+        result = _handle_crypto(args, "dummy", "dummy")
+        assert result == _CRYPTO_NOT_ENCRYPTED
+        assert "%vetkey encrypt" in result
 
-    def test_escaping_scope_single_quotes(self):
-        code = _crypto_encrypt_file_code("/tmp/test.txt", "O'Brien")
-        assert "O\\'Brien" in code
-        compile(code, "<test>", "exec")
+    def test_the_help_offers_no_crypto_encrypt(self):
+        for gone in (
+            "%crypto encrypt",
+            "%crypto decrypt",
+            "encrypt-text",
+            "decrypt-text",
+        ):
+            assert gone not in _CRYPTO_USAGE
+        assert "%vetkey encrypt" in _CRYPTO_USAGE
 
 
 class TestHandleGroupDispatch:
@@ -525,22 +529,6 @@ class TestHandleCryptoDispatch:
 
     def test_envelopes_missing_scope(self):
         result = _handle_crypto("envelopes", "dummy", "dummy")
-        assert "Usage:" in result
-
-    def test_encrypt_missing_file(self):
-        result = _handle_crypto("encrypt", "dummy", "dummy")
-        assert "Usage:" in result
-
-    def test_decrypt_missing_file(self):
-        result = _handle_crypto("decrypt", "dummy", "dummy")
-        assert "Usage:" in result
-
-    def test_encrypt_text_missing_text(self):
-        result = _handle_crypto("encrypt-text", "dummy", "dummy")
-        assert "Usage:" in result
-
-    def test_decrypt_text_missing_text(self):
-        result = _handle_crypto("decrypt-text", "dummy", "dummy")
         assert "Usage:" in result
 
     def test_share_missing_args(self):
