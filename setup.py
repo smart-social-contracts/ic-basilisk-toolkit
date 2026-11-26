@@ -25,7 +25,7 @@ setup(
     python_requires=">=3.10",
     install_requires=[
         "ic-basilisk>=0.11.0",
-        "ic-python-db>=0.9.0",
+        "ic-python-db>=0.17.0",
         "ic-python-logging>=0.3.1",
     ],
     extras_require={
