@@ -3997,18 +3997,15 @@ _CRYPTO_USAGE = (
     "  %crypto status                                   Show current identity & cached keys\n"
     "  %crypto scopes                                   List scopes accessible by current user\n"
     "\n"
-    "  %crypto encrypt <file> [--scope <s>]             Encrypt a file in memfs (in-place)\n"
-    "  %crypto decrypt <file>                           Decrypt a file in memfs (in-place)\n"
-    "  %crypto encrypt-text <plaintext> [--scope <s>]   Encrypt a string, print ciphertext\n"
-    "  %crypto decrypt-text <ciphertext>                Decrypt a string, print plaintext\n"
-    "\n"
     "  %crypto share <scope> --with <principal>         Wrap DEK for a principal\n"
     "  %crypto share <scope> --with-group <group>       Wrap DEK for all group members\n"
     "  %crypto revoke <scope> --from <principal>        Delete principal's envelope\n"
     "  %crypto revoke <scope> --from-group <group>      Delete group members' envelopes\n"
     "\n"
     "  %crypto envelopes <scope>                        List who has access to a scope\n"
-    "  %crypto init [--scope <s>]                       Create a new DEK for a scope"
+    "  %crypto init [--scope <s>]                       Create a new DEK for a scope\n"
+    "\n"
+    "  To encrypt or decrypt a file or text, use %vetkey encrypt / %vetkey decrypt."
 )
 
 
@@ -4199,83 +4196,15 @@ def _crypto_revoke_group_code(scope: str, group_name: str) -> str:
     )
 
 
-def _crypto_encrypt_file_code(filepath: str, scope: str) -> str:
-    """Generate on-canister code for %crypto encrypt <file> --scope <s>."""
-    esc_path = filepath.replace("'", "\\'")
-    esc_scope = scope.replace("'", "\\'")
-    return (
-        "import os as _os\n"
-        "from ic_basilisk_toolkit.crypto import encode_ciphertext, is_encrypted\n"
-        f"_path = '{esc_path}'\n"
-        f"_scope = '{esc_scope}'\n"
-        "try:\n"
-        "    with open(_path, 'rb') as _f:\n"
-        "        _data = _f.read()\n"
-        "except FileNotFoundError:\n"
-        "    print(f'{_path}: No such file')\n"
-        "    _data = None\n"
-        "if _data is not None:\n"
-        "    if is_encrypted(_data.decode('utf-8', errors='replace')):\n"
-        "        print(f'{_path}: Already encrypted.')\n"
-        "    else:\n"
-        "        _iv = _os.urandom(12)\n"
-        "        _ct = encode_ciphertext(_iv.hex(), _data.hex())\n"
-        "        with open(_path, 'w') as _f:\n"
-        "            _f.write(_ct)\n"
-        "        print(f'Encrypted {_path} ({len(_data)} bytes) with scope {_scope}.')\n"
-    )
-
-
-def _crypto_decrypt_file_code(filepath: str) -> str:
-    """Generate on-canister code for %crypto decrypt <file>."""
-    esc_path = filepath.replace("'", "\\'")
-    return (
-        "from ic_basilisk_toolkit.crypto import decode_ciphertext, is_encrypted\n"
-        f"_path = '{esc_path}'\n"
-        "try:\n"
-        "    with open(_path, 'r') as _f:\n"
-        "        _content = _f.read()\n"
-        "except FileNotFoundError:\n"
-        "    print(f'{_path}: No such file')\n"
-        "    _content = None\n"
-        "if _content is not None:\n"
-        "    if not is_encrypted(_content):\n"
-        "        print(f'{_path}: Not encrypted.')\n"
-        "    else:\n"
-        "        _iv, _data_hex = decode_ciphertext(_content)\n"
-        "        _data = bytes.fromhex(_data_hex)\n"
-        "        with open(_path, 'wb') as _f:\n"
-        "            _f.write(_data)\n"
-        "        print(f'Decrypted {_path} ({len(_data)} bytes).')\n"
-    )
-
-
-def _crypto_encrypt_text_code(plaintext: str, scope: str) -> str:
-    """Generate on-canister code for %crypto encrypt-text."""
-    esc_text = plaintext.replace("'", "\\'")
-    esc_scope = scope.replace("'", "\\'")
-    return (
-        "import os as _os\n"
-        "from ic_basilisk_toolkit.crypto import encode_ciphertext\n"
-        f"_text = '{esc_text}'\n"
-        "_iv = _os.urandom(12)\n"
-        "_ct = encode_ciphertext(_iv.hex(), _text.encode('utf-8').hex())\n"
-        "print(_ct)\n"
-    )
-
-
-def _crypto_decrypt_text_code(ciphertext: str) -> str:
-    """Generate on-canister code for %crypto decrypt-text."""
-    esc_ct = ciphertext.replace("'", "\\'")
-    return (
-        "from ic_basilisk_toolkit.crypto import decode_ciphertext, is_encrypted\n"
-        f"_ct = '{esc_ct}'\n"
-        "if not is_encrypted(_ct):\n"
-        "    print('Not in encrypted format.')\n"
-        "else:\n"
-        "    _iv, _data_hex = decode_ciphertext(_ct)\n"
-        "    print(bytes.fromhex(_data_hex).decode('utf-8', errors='replace'))\n"
-    )
+# %crypto encrypt, decrypt, encrypt-text and decrypt-text wrote the plaintext,
+# hex-encoded, in the ciphertext format (enc:v=2:iv=<random>:d=<plaintext hex>),
+# used no key, and printed "Encrypted ... with scope ...": a confidentiality
+# claim they did not honour (#19). They now refuse, before any canister call.
+_CRYPTO_NOT_ENCRYPTED = (
+    "%crypto encrypt, decrypt, encrypt-text and decrypt-text are removed: they "
+    "never encrypted anything. They wrote the plaintext as hex, so a file they "
+    "'encrypted' still holds it. Use %vetkey encrypt and %vetkey decrypt."
+)
 
 
 def _handle_crypto(args: str, canister: str, network: str) -> str:
@@ -4307,45 +4236,8 @@ def _handle_crypto(args: str, canister: str, network: str) -> str:
                 scope = parts[idx + 1]
         return canister_exec(_crypto_init_code(scope), canister, network)
 
-    if subcmd == "encrypt":
-        if len(parts) < 2:
-            return "Usage: %crypto encrypt <file> [--scope <s>]"
-        filepath = parts[1]
-        scope = "default"
-        if "--scope" in parts:
-            idx = parts.index("--scope")
-            if idx + 1 < len(parts):
-                scope = parts[idx + 1]
-        return canister_exec(
-            _crypto_encrypt_file_code(filepath, scope), canister, network
-        )
-
-    if subcmd == "decrypt":
-        if len(parts) < 2:
-            return "Usage: %crypto decrypt <file>"
-        return canister_exec(_crypto_decrypt_file_code(parts[1]), canister, network)
-
-    if subcmd == "encrypt-text":
-        if len(parts) < 2:
-            return "Usage: %crypto encrypt-text <plaintext> [--scope <s>]"
-        # Collect text (everything except --scope flag)
-        text_parts = []
-        scope = "default"
-        i = 1
-        while i < len(parts):
-            if parts[i] == "--scope" and i + 1 < len(parts):
-                scope = parts[i + 1]
-                i += 2
-            else:
-                text_parts.append(parts[i])
-                i += 1
-        text = " ".join(text_parts)
-        return canister_exec(_crypto_encrypt_text_code(text, scope), canister, network)
-
-    if subcmd == "decrypt-text":
-        if len(parts) < 2:
-            return "Usage: %crypto decrypt-text <ciphertext>"
-        return canister_exec(_crypto_decrypt_text_code(parts[1]), canister, network)
+    if subcmd in ("encrypt", "decrypt", "encrypt-text", "decrypt-text"):
+        return _CRYPTO_NOT_ENCRYPTED
 
     if subcmd == "share":
         if len(parts) < 4:
@@ -4795,15 +4687,14 @@ GROUPS (Encryption Groups)
   %group remove <name> <principal> Remove member
   %group members <name>            List members""",
     "crypto": """\
-CRYPTO (File Encryption)
+CRYPTO (Keys and Access)
   %crypto status              Show encryption status
   %crypto scopes              List encryption scopes
-  %crypto encrypt <target>    Encrypt file or text
-  %crypto decrypt <target>    Decrypt file or text
   %crypto share <target>      Share encrypted file
   %crypto revoke <target>     Revoke shared access
   %crypto envelopes           List key envelopes
-  %crypto init                Initialize encryption""",
+  %crypto init                Initialize encryption
+  To encrypt or decrypt, use %vetkey encrypt / %vetkey decrypt.""",
     "repl": """\
 REPL COMMANDS
   %who                     List variables in namespace
@@ -4842,7 +4733,7 @@ BASILISK SHELL \u2014 :help [topic] for details
   wallet   Wallet (%wallet balance, transfer, ...)
   vetkey   VetKey encryption (%vetkey encrypt, decrypt, ...)
   group    Encryption groups (%group create, add, ...)
-  crypto   File encryption (%crypto encrypt, share, ...)
+  crypto   Keys and access to encrypted files (%crypto share, revoke, ...)
   repl     REPL commands (%who, %info, %cedar, %entities, %get, %put, !)
 
 Examples:
